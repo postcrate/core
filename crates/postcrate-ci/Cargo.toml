@@ -1,0 +1,20 @@
+[package]
+name = "postcrate-ci"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Fast-start CI variant of postcrate: emits connection info to stdout."
+
+[[bin]]
+name = "postcrate-ci"
+path = "src/main.rs"
+
+[dependencies]
+postcrate-core = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -1,0 +1,16 @@
+/target
+/Cargo.lock.*
+**/*.rs.bk
+*.swp
+.DS_Store
+/.idea
+/.vscode
+/blobs
+/data
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
