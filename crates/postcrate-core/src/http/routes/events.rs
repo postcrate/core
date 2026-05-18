@@ -1,9 +1,9 @@
 //! Server-Sent Events stream of [`CoreEvent`] — `GET /api/v1/events`.
 //!
-//! Provides a real-time event feed to consumers that aren't linked
-//! against `postcrate-core` (the React frontend, the MCP server when
-//! it runs out-of-process, the matcher packages). Each line on the
-//! wire follows the SSE spec:
+//! Provides a real-time event feed to out-of-process consumers — any
+//! caller that can hold an HTTP connection open and parse text/event-
+//! stream. In-process embedders should use [`crate::Service::subscribe`]
+//! directly instead. Each line on the wire follows the SSE spec:
 //!
 //! ```text
 //! event: newEmail

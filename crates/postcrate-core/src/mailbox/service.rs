@@ -270,8 +270,8 @@ impl MailboxService {
     }
 
     /// Clone the ingest sender so callers can push synthetic envelopes
-    /// (recording replay, future MCP/CLI fixtures) through the same
-    /// single-writer pipeline that the real SMTP path uses.
+    /// (recording replay, test fixtures) through the same single-writer
+    /// pipeline that the real SMTP path uses.
     pub fn ingest_tx(&self) -> mpsc::Sender<CapturedEnvelope> {
         self.ingest_tx.clone()
     }

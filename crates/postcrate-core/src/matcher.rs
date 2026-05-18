@@ -1,15 +1,16 @@
 //! Email predicates + structured matching.
 //!
-//! Shared primitive used by:
-//!   - the MCP `wait_for_email` and `assert_email_matches` tools,
-//!   - the CLI `wait` subcommand,
-//!   - the matcher packages' `waitForEmail` / `toContainEmail` helpers,
-//!   - the HTTP "did it send" diagnostic endpoint.
+//! Powers the [`Service::wait_for_email`] and
+//! [`Service::assert_email_matches`] entry points, and the HTTP
+//! `/messages/wait` and `/messages/:id/assert` routes built on them.
 //!
 //! One type, two uses: cheap `matches_summary` for live-stream
-//! filtering against the lightweight `EmailSummary`, and full
-//! `check` returning a structured mismatch report against a parsed
+//! filtering against the lightweight `EmailSummary`, and full `check`
+//! returning a structured mismatch report against a parsed
 //! `EmailDetail`.
+//!
+//! [`Service::wait_for_email`]: crate::Service::wait_for_email
+//! [`Service::assert_email_matches`]: crate::Service::assert_email_matches
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};

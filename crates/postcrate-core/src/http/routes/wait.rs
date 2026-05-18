@@ -1,8 +1,11 @@
 //! `POST /messages/wait` and `POST /messages/:id/assert`.
 //!
-//! These expose the shared matcher primitives over HTTP so the MCP
-//! server, the matcher packages, and direct `curl` users all hit the
-//! same code path as the in-process `Service::wait_for_email`.
+//! HTTP front-ends for [`Service::wait_for_email`] and
+//! [`Service::assert_email_matches`]. Out-of-process callers share the
+//! same matcher primitives as in-process embedders.
+//!
+//! [`Service::wait_for_email`]: crate::Service::wait_for_email
+//! [`Service::assert_email_matches`]: crate::Service::assert_email_matches
 
 use std::time::Duration;
 
