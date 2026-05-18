@@ -20,6 +20,7 @@ use tokio::net::TcpStream;
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct RelayConfig {
     /// Relay host, e.g. `smtp.resend.com` or `127.0.0.1`.

@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::smtp::relay::RelayConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct ForwardingRule {
     pub id: String,
@@ -21,6 +22,7 @@ pub struct ForwardingRule {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct CreateForwardingRule {
     pub mailbox_id: Option<String>,

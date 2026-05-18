@@ -82,6 +82,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 tokio-rustls = { version = "0.26", default-features = false, features = ["tls12", "ring"] }
 rustls-pemfile = "2"
 
+# Opt-in TypeScript type generation. Off by default; embedders that
+# bridge to a TypeScript frontend (e.g. the Tauri shell) turn it on to
+# get `specta::Type` derives on every public DTO.
+specta = { version = "=2.0.0-rc.20", default-features = false, features = ["derive", "serde", "serde_json"] }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

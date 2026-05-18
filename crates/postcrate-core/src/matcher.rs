@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::emails::{EmailDetail, EmailSummary};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct EmailPredicate {
     /// Restrict to a single mailbox.
@@ -45,6 +46,7 @@ pub struct EmailPredicate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct HeaderPredicate {
     pub name: String,
@@ -55,6 +57,7 @@ pub struct HeaderPredicate {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct MatchResult {
     pub matched: bool,
@@ -213,6 +216,7 @@ fn check_regex(out: &mut MatchResult, field: &str, pat: &str, haystack: &str) {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct WaitOutcome {
     /// The first email that satisfied the predicate, or `None` if we

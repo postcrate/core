@@ -20,6 +20,7 @@ pub trait EventSink: Send + Sync + 'static {
 /// Engine event surface. Adding a variant is a semver-minor change —
 /// consumers using `Sink: EventSink` only have to handle what they know.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CoreEvent {
     NewEmail {
@@ -42,6 +43,7 @@ pub enum CoreEvent {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum MailboxStateChange {
     Created,
@@ -54,6 +56,7 @@ pub enum MailboxStateChange {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct ServerStatus {
     pub running_mailboxes: u32,
@@ -62,6 +65,7 @@ pub struct ServerStatus {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "lowercase")]
 pub enum BounceKind {
     Hard,

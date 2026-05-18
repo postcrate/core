@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct Webhook {
     pub id: String,
@@ -22,6 +23,7 @@ pub struct Webhook {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct CreateWebhook {
     pub mailbox_id: Option<String>,

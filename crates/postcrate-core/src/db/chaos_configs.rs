@@ -6,6 +6,7 @@ use sqlx::{Row, SqlitePool};
 use crate::error::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct ChaosConfig {
     #[serde(default)]

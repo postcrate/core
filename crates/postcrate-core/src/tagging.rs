@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::mail::parse::Parsed;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "snake_case")]
 pub enum EmailTag {
     TransactionalAuth,

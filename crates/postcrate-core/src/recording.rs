@@ -23,6 +23,7 @@ use crate::error::{Error, Result};
 pub const RECORDING_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct Recording {
     pub version: u32,
@@ -34,6 +35,7 @@ pub struct Recording {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct RecordedMessage {
     pub envelope: RecordedEnvelope,
@@ -43,6 +45,7 @@ pub struct RecordedMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct RecordedEnvelope {
     pub mail_from: String,

@@ -14,6 +14,7 @@ use crate::mailbox::kinds::MailboxKind;
 
 /// A mailbox row joined with its current message count.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct Mailbox {
     pub id: String,
@@ -34,6 +35,7 @@ pub struct Mailbox {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct CreateMailboxInput {
     pub project_id: String,
@@ -46,6 +48,7 @@ pub struct CreateMailboxInput {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateMailboxInput {
     pub name: Option<String>,
@@ -54,6 +57,7 @@ pub struct UpdateMailboxInput {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct CreateEphemeralInput {
     pub project_id: String,
@@ -62,6 +66,7 @@ pub struct CreateEphemeralInput {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct EphemeralHandle {
     pub id: String,

@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::events::BounceKind;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct BounceRule {
     #[serde(default)]

@@ -8,6 +8,7 @@ use crate::db::attachments::AttachmentInsert;
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct EmailSummary {
     pub id: String,
@@ -26,6 +27,7 @@ pub struct EmailSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct AttachmentMeta {
     pub id: String,
@@ -36,6 +38,7 @@ pub struct AttachmentMeta {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct EmailDetail {
     pub id: String,

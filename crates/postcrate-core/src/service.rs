@@ -168,7 +168,11 @@ impl Service {
     }
 
     pub async fn stop_all(&self) -> Result<()> {
-        if let Some(http) = self.inner.http_handle.lock().take() {
+        // Scope the lock so the MutexGuard is dropped before we await
+        // — otherwise this future is `!Send` and can't be spawned from
+        // a multi-thread runtime (e.g. Tauri's app shutdown hook).
+        let http = self.inner.http_handle.lock().take();
+        if let Some(http) = http {
             http.shutdown.cancel();
             let _ = http.task.await;
         }

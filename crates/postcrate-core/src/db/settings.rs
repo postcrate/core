@@ -10,6 +10,7 @@ use sqlx::{Row, SqlitePool};
 use crate::error::Result;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "lowercase")]
 pub enum SettingsSection {
     Network,
@@ -30,6 +31,7 @@ impl SettingsSection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkPrefs {
     pub smtp_port: u16,
@@ -63,6 +65,7 @@ impl Default for NetworkPrefs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPrefs {
     pub default_wait_timeout_seconds: u32,
@@ -81,6 +84,7 @@ impl Default for AgentPrefs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct InboxPrefs {
     pub max_retained_emails: u32,
@@ -101,6 +105,7 @@ impl Default for InboxPrefs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct AdvancedPrefs {
     pub debug_logging: bool,
@@ -119,6 +124,7 @@ impl Default for AdvancedPrefs {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct BackendSettings {
     pub network: NetworkPrefs,
@@ -129,6 +135,7 @@ pub struct BackendSettings {
 
 /// One-of patch — exactly one section is set per call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase", tag = "section", content = "value")]
 pub enum SettingsPatch {
     Network(NetworkPrefs),

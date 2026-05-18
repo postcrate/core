@@ -19,6 +19,10 @@ default = []
 # Enables STARTTLS in the SMTP session loop. When off, STARTTLS is
 # never advertised in EHLO and the command replies 502.
 tls = ["dep:tokio-rustls", "dep:rustls-pemfile"]
+# Adds `specta::Type` derives to every public DTO so embedders can
+# generate TypeScript bindings (e.g. via `tauri-specta`). No runtime
+# behavior change; default builds do not pull `specta` in.
+specta = ["dep:specta"]
 
 [dependencies]
 tokio = { workspace = true }
@@ -59,6 +63,8 @@ reqwest = { workspace = true }
 
 tokio-rustls = { workspace = true, optional = true }
 rustls-pemfile = { workspace = true, optional = true }
+
+specta = { workspace = true, optional = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

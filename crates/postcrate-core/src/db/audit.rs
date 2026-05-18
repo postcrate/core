@@ -7,6 +7,7 @@ use sqlx::{Row, SqlitePool};
 use crate::error::Result;
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct AuditEntry {
     pub id: i64,
