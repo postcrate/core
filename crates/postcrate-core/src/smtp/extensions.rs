@@ -11,6 +11,10 @@ pub struct EhloAdvert {
     pub hostname: String,
     pub max_size: u64,
     pub starttls_enabled: bool,
+    /// When true, advertise `AUTH PLAIN LOGIN`. We accept any
+    /// credentials (Mailpit-style) — AUTH is for client compatibility,
+    /// not for security in a local capture server.
+    pub auth_enabled: bool,
 }
 
 impl EhloAdvert {
@@ -28,6 +32,9 @@ impl EhloAdvert {
         lines.push(Cow::Borrowed("ENHANCEDSTATUSCODES"));
         if self.starttls_enabled {
             lines.push(Cow::Borrowed("STARTTLS"));
+        }
+        if self.auth_enabled {
+            lines.push(Cow::Borrowed("AUTH PLAIN LOGIN"));
         }
         lines.push(Cow::Borrowed("HELP"));
         SmtpReply::multi(250, lines)

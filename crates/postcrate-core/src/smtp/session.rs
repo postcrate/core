@@ -150,6 +150,43 @@ where
                 let stream = reader_half.unsplit(writer_half);
                 return Ok(SessionOutcome::UpgradeTls(stream));
             }
+            SmtpCommand::Auth { mechanism, initial } => {
+                if !ctx.ehlo_advert.auth_enabled {
+                    writer.send(&SmtpReply::command_not_implemented()).await?;
+                    continue;
+                }
+                // We accept anything (compatibility mode) — see
+                // EhloAdvert::auth_enabled.
+                match mechanism.as_str() {
+                    "PLAIN" => {
+                        if initial.is_none() {
+                            writer.send(&SmtpReply::auth_continue("")).await?;
+                            // Read one more line (the base64 credentials).
+                            if reader.next_line().await?.is_none() {
+                                break;
+                            }
+                        }
+                        writer.send(&SmtpReply::auth_ok()).await?;
+                    }
+                    "LOGIN" => {
+                        // RFC 4954 + Microsoft LOGIN: prompt for username then
+                        // password, both base64-encoded by the client.
+                        writer.send(&SmtpReply::auth_continue("VXNlcm5hbWU6")).await?; // "Username:"
+                        if reader.next_line().await?.is_none() {
+                            break;
+                        }
+                        writer.send(&SmtpReply::auth_continue("UGFzc3dvcmQ6")).await?; // "Password:"
+                        if reader.next_line().await?.is_none() {
+                            break;
+                        }
+                        writer.send(&SmtpReply::auth_ok()).await?;
+                    }
+                    _ => {
+                        writer.send(&SmtpReply::auth_unsupported()).await?;
+                    }
+                }
+                continue;
+            }
             _ => {}
         }
 
@@ -278,7 +315,8 @@ where
             (_, SmtpCommand::Quit | SmtpCommand::Rset | SmtpCommand::Noop)
             | (_, SmtpCommand::Vrfy(_))
             | (_, SmtpCommand::Help(_))
-            | (_, SmtpCommand::StartTls) => {
+            | (_, SmtpCommand::StartTls)
+            | (_, SmtpCommand::Auth { .. }) => {
                 // Handled above; unreachable in well-formed code.
             }
         }

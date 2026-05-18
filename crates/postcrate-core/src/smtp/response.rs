@@ -99,6 +99,22 @@ impl SmtpReply {
     pub fn tls_already_active() -> Self {
         SmtpReply::new(503, "TLS already active")
     }
+
+    pub fn auth_ok() -> Self {
+        SmtpReply::new(235, "Authentication successful")
+    }
+
+    pub fn auth_continue(prompt_b64: &str) -> Self {
+        SmtpReply::new(334, prompt_b64.to_string())
+    }
+
+    pub fn auth_failed() -> Self {
+        SmtpReply::new(535, "Authentication failed")
+    }
+
+    pub fn auth_unsupported() -> Self {
+        SmtpReply::new(504, "Unsupported authentication mechanism")
+    }
 }
 
 /// Writer wrapper that serializes a `SmtpReply` to the wire.

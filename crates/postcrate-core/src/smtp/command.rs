@@ -19,6 +19,8 @@ pub enum SmtpCommand {
     Help(Option<String>),
     /// `STARTTLS` — recognized but currently returns `502` (feature-gated).
     StartTls,
+    /// `AUTH <mechanism> [initial-response]`. We accept PLAIN and LOGIN.
+    Auth { mechanism: String, initial: Option<String> },
     /// Recognized but unimplemented (e.g. AUTH); we'll reply `502`.
     Unknown(String),
 }
@@ -60,6 +62,17 @@ impl SmtpCommand {
                 }))
             }
             "STARTTLS" => Ok(SmtpCommand::StartTls),
+            "AUTH" => {
+                let r = rest.trim();
+                let mut it = r.splitn(2, char::is_whitespace);
+                let mechanism = it
+                    .next()
+                    .map(str::to_string)
+                    .unwrap_or_default()
+                    .to_ascii_uppercase();
+                let initial = it.next().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+                Ok(SmtpCommand::Auth { mechanism, initial })
+            }
             other => Ok(SmtpCommand::Unknown(other.to_string())),
         }
     }

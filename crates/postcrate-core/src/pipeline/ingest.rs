@@ -22,6 +22,7 @@ use crate::error::Result;
 use crate::events::{CoreEvent, EventSink};
 use crate::mail::parse::{self as parse_mail, ParsedAttachment};
 use crate::pipeline::retention;
+use crate::tagging;
 use crate::smtp::data_reader::{finalize_to_blob, load_bytes};
 use crate::smtp::session::CapturedEnvelope;
 
@@ -85,6 +86,8 @@ async fn ingest_one(
 
     let parsed_json = parsed_to_json(&parsed);
     let fts_body = parse_mail::fts_body(&parsed);
+    let tag = tagging::classify(&parsed);
+    let tag_str = Some(tag.as_str().to_string());
 
     let insert = EmailInsert {
         mailbox_id: env.mailbox_id.clone(),
@@ -106,6 +109,7 @@ async fn ingest_one(
         ext_8bitmime: env.ext_8bitmime,
         attachments,
         fts_body,
+        tag: tag_str,
     };
 
     let outcome = db_emails::insert(pool, insert).await?;

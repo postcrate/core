@@ -132,4 +132,17 @@ mod tests {
         let p = parse_path("<\"strange@name\"@host>").unwrap();
         assert_eq!(p.mailbox, "\"strange@name\"@host");
     }
+
+    #[test]
+    fn ip_literal() {
+        // RFC 5321 §4.1.3: domain may be an address literal `[ip]`.
+        let p = parse_path("<user@[192.0.2.1]>").unwrap();
+        assert_eq!(p.mailbox, "user@[192.0.2.1]");
+    }
+
+    #[test]
+    fn ipv6_literal() {
+        let p = parse_path("<user@[IPv6:2001:db8::1]>").unwrap();
+        assert_eq!(p.mailbox, "user@[IPv6:2001:db8::1]");
+    }
 }

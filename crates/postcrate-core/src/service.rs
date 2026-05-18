@@ -9,6 +9,8 @@ use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use tokio::sync::broadcast;
+
 use crate::config::CoreConfig;
 use crate::db::audit::{AuditAppend, AuditEntry};
 use crate::db::bounce_rules::BounceRule;
@@ -21,7 +23,7 @@ use crate::db::settings::{BackendSettings, SettingsPatch};
 use crate::db::{audit as db_audit, bounce_rules, chaos_configs, emails as db_emails,
                 mailboxes as db_mb, pool as db_pool, settings as db_settings};
 use crate::error::Result;
-use crate::events::{CoreEvent, EventSink, ServerStatus};
+use crate::events::{ChannelSink, ComposedSink, CoreEvent, EventSink, ServerStatus};
 use crate::http;
 use crate::mailbox::kinds::MailboxKind;
 use crate::mailbox::lifecycle::{self, ExpiryMsg};
@@ -33,11 +35,22 @@ pub struct Service {
     inner: Arc<Inner>,
 }
 
+#[derive(Debug)]
+struct ScanResult {
+    matched: Option<EmailDetail>,
+    seen: Vec<EmailSummary>,
+}
+
 pub(crate) struct Inner {
     pub config: CoreConfig,
     pub pool: SqlitePool,
     pub mailboxes: Arc<MailboxService>,
     pub sink: Arc<dyn EventSink>,
+    /// In-process fan-out for `Service::subscribe`. Wrapped under the
+    /// user-provided sink via `ComposedSink` so every emission reaches
+    /// both the embedder (LogSink / TauriEventSink / …) and any
+    /// `subscribe()` consumers (CLI tail, SSE endpoint, wait_for_email).
+    pub events: ChannelSink,
     pub cancel: CancellationToken,
     http_handle: parking_lot::Mutex<Option<http::HttpServerHandle>>,
     started: parking_lot::Mutex<bool>,
@@ -66,19 +79,28 @@ impl Service {
         let (ingest_tx, ingest_rx) = mpsc::channel::<CapturedEnvelope>(cfg.ingest_channel_capacity);
         let (expiry_tx, expiry_rx) = mpsc::unbounded_channel::<ExpiryMsg>();
 
+        // Build a composed sink: the user's sink + our internal channel
+        // sink. Every `emit` reaches both. Subscribers (CLI tail, SSE,
+        // wait_for_email) read from `events`.
+        let events = ChannelSink::new(1024);
+        let composed: Arc<dyn EventSink> = Arc::new(ComposedSink::new(vec![
+            sink.clone(),
+            Arc::new(events.clone()),
+        ]));
+
         let mailboxes = Arc::new(MailboxService::new(
             pool.clone(),
             cfg.clone(),
             ingest_tx,
             expiry_tx,
-            sink.clone(),
+            composed.clone(),
         ));
 
         let raw_dir = cfg.raw_dir();
         let att_dir = cfg.att_dir();
         let ingest_task = ingest::spawn(
             pool.clone(),
-            sink.clone(),
+            composed.clone(),
             ingest_rx,
             raw_dir,
             att_dir,
@@ -104,7 +126,8 @@ impl Service {
                 config: cfg,
                 pool,
                 mailboxes,
-                sink,
+                sink: composed,
+                events,
                 cancel,
                 http_handle: parking_lot::Mutex::new(None),
                 started: parking_lot::Mutex::new(false),
@@ -113,6 +136,16 @@ impl Service {
                 _ttl_task: ttl_task,
             }),
         })
+    }
+
+    /// Subscribe to engine events. Each call returns a fresh
+    /// `broadcast::Receiver`; consumers that lag behind by more than
+    /// the channel capacity (currently 1024) will receive `Lagged`
+    /// errors and must reconnect. This is the canonical way for the
+    /// CLI `tail`, the SSE endpoint, the `wait_for_email` primitive,
+    /// and external consumers to observe events.
+    pub fn subscribe(&self) -> broadcast::Receiver<CoreEvent> {
+        self.inner.events.subscribe()
     }
 
     /// Start every persisted mailbox's listener + the HTTP API.
@@ -297,8 +330,11 @@ impl Service {
         Ok(())
     }
 
+    /// Clear all non-pinned emails from a mailbox. Pinned emails (set
+    /// via [`Self::set_pinned`]) survive per FR-UX-40. Use
+    /// [`Self::purge_mailbox`] to wipe everything including pinned.
     pub async fn clear_mailbox(&self, mailbox_id: &str) -> Result<u64> {
-        let (n, paths) = db_emails::clear_mailbox(&self.inner.pool, mailbox_id).await?;
+        let (n, paths) = db_emails::clear_mailbox(&self.inner.pool, mailbox_id, true).await?;
         for p in &paths {
             let _ = tokio::fs::remove_file(p).await;
         }
@@ -311,6 +347,92 @@ impl Service {
         )
         .await;
         Ok(n)
+    }
+
+    /// Wipe every email in a mailbox — pinned ones included. Use
+    /// only for explicit "purge" actions (rare).
+    pub async fn purge_mailbox(&self, mailbox_id: &str) -> Result<u64> {
+        let (n, paths) = db_emails::clear_mailbox(&self.inner.pool, mailbox_id, false).await?;
+        for p in &paths {
+            let _ = tokio::fs::remove_file(p).await;
+        }
+        self.audit(
+            "user",
+            "mailbox.purge",
+            Some("mailbox"),
+            Some(mailbox_id),
+            Some(serde_json::json!({"deleted": n})),
+        )
+        .await;
+        Ok(n)
+    }
+
+    pub async fn set_pinned(&self, id: &str, pinned: bool) -> Result<()> {
+        db_emails::set_pinned(&self.inner.pool, id, pinned).await?;
+        self.audit(
+            "user",
+            if pinned { "email.pin" } else { "email.unpin" },
+            Some("email"),
+            Some(id),
+            None,
+        )
+        .await;
+        Ok(())
+    }
+
+    pub async fn set_starred(&self, id: &str, starred: bool) -> Result<()> {
+        db_emails::set_starred(&self.inner.pool, id, starred).await?;
+        self.audit(
+            "user",
+            if starred { "email.star" } else { "email.unstar" },
+            Some("email"),
+            Some(id),
+            None,
+        )
+        .await;
+        Ok(())
+    }
+
+    pub async fn set_note(&self, id: &str, note: Option<&str>) -> Result<()> {
+        db_emails::set_note(&self.inner.pool, id, note).await?;
+        self.audit("user", "email.note", Some("email"), Some(id), None).await;
+        Ok(())
+    }
+
+    /// Forward a captured email to a real address via an external SMTP
+    /// relay. The original raw bytes are sent unchanged; the envelope
+    /// `MAIL FROM` defaults to the captured sender and the envelope
+    /// recipient is the new `to`.
+    ///
+    /// Audit-logged (PROD.md §9.3): this is the only public-Service
+    /// method that produces outbound network traffic, so users need a
+    /// clear trail of when releases happen.
+    pub async fn release_email(
+        &self,
+        id: &str,
+        to: &str,
+        relay: &crate::RelayConfig,
+    ) -> Result<()> {
+        let detail = self.get_email(id).await?;
+        let raw = self.get_email_raw(id).await?;
+        let from = if detail.from.is_empty() {
+            "postcrate@localhost".to_string()
+        } else {
+            detail.from.clone()
+        };
+        crate::smtp::relay::relay_message(relay, &from, &[to.to_string()], &raw).await?;
+        self.audit(
+            "user",
+            "email.release",
+            Some("email"),
+            Some(id),
+            Some(serde_json::json!({
+                "to": to,
+                "relay": format!("{}:{}", relay.host, relay.port),
+            })),
+        )
+        .await;
+        Ok(())
     }
 
     pub async fn search_emails(
@@ -400,6 +522,343 @@ impl Service {
         db_settings::apply_patch(&self.inner.pool, &patch).await?;
         self.inner.sink.emit(CoreEvent::SettingsChanged { section });
         Ok(())
+    }
+
+    // ---- Scenarios ----
+
+    /// Score a captured email's spam-likelihood (FR-SCENARIO-20).
+    /// Local heuristics only; no network.
+    pub async fn analyze_spam(
+        &self,
+        id: &str,
+    ) -> Result<crate::scenarios::spam::SpamReport> {
+        let parsed = self.parsed_email(id).await?;
+        Ok(crate::scenarios::spam::score(&parsed))
+    }
+
+    /// Extract + classify every link in a captured email
+    /// (FR-SCENARIO-40). Does not HEAD-check links.
+    pub async fn analyze_links(
+        &self,
+        id: &str,
+    ) -> Result<crate::scenarios::links::LinkReport> {
+        let parsed = self.parsed_email(id).await?;
+        Ok(crate::scenarios::links::extract(&parsed))
+    }
+
+    /// Inspect SPF / DKIM / DMARC headers and predict pass/fail
+    /// (FR-SCENARIO-30). Header inspection only.
+    pub async fn analyze_auth(
+        &self,
+        id: &str,
+    ) -> Result<crate::scenarios::auth::AuthReport> {
+        let parsed = self.parsed_email(id).await?;
+        Ok(crate::scenarios::auth::analyze(&parsed))
+    }
+
+    /// Helper: re-parse a captured email's raw bytes from disk.
+    /// We don't cache the full `Parsed` in SQLite (only its JSON
+    /// projection), so scenarios that need attachments or full
+    /// headers re-parse on demand.
+    async fn parsed_email(&self, id: &str) -> Result<crate::mail::parse::Parsed> {
+        let raw = self.get_email_raw(id).await?;
+        Ok(crate::mail::parse::parse(&raw))
+    }
+
+    // ---- Rendering ----
+
+    /// Render the email's HTML body through a client profile
+    /// (FR-RENDER-01). Returns the transformed HTML + a list of
+    /// transforms that ran.
+    pub async fn render_preview(
+        &self,
+        id: &str,
+        profile: crate::rendering::profile::Profile,
+    ) -> Result<crate::rendering::profile::RenderedPreview> {
+        let detail = self.get_email(id).await?;
+        let html = detail.html_body.unwrap_or_default();
+        Ok(crate::rendering::profile::apply(&html, profile))
+    }
+
+    /// Lint the email's HTML for known client incompatibilities
+    /// (FR-RENDER-10).
+    pub async fn lint_html(&self, id: &str) -> Result<crate::rendering::lint::LintReport> {
+        let detail = self.get_email(id).await?;
+        let html = detail.html_body.unwrap_or_default();
+        Ok(crate::rendering::lint::lint(&html))
+    }
+
+    /// Accessibility check on the email's HTML (FR-RENDER-30).
+    pub async fn audit_a11y(&self, id: &str) -> Result<crate::rendering::a11y::A11yReport> {
+        let detail = self.get_email(id).await?;
+        let html = detail.html_body.unwrap_or_default();
+        Ok(crate::rendering::a11y::audit(&html))
+    }
+
+    // ---- Recordings ----
+
+    /// Snapshot every email in a mailbox into a portable
+    /// `.postcrate` recording (FR-TEST-30). The result serializes to
+    /// JSON via serde; the caller is responsible for persisting it.
+    pub async fn export_recording(
+        &self,
+        mailbox_id: &str,
+        label: Option<String>,
+    ) -> Result<crate::recording::Recording> {
+        // Existence check + 404 propagation.
+        let _ = db_mb::get(&self.inner.pool, mailbox_id).await?;
+        let summaries = db_emails::list(&self.inner.pool, mailbox_id, u32::MAX, 0).await?;
+        let mut messages = Vec::with_capacity(summaries.len());
+        // Walk in chronological order so replay observes the same
+        // received-at ordering as the original capture.
+        let mut summaries = summaries;
+        summaries.sort_by_key(|s| s.received_at);
+        for s in summaries {
+            let raw = self.get_email_raw(&s.id).await?;
+            let detail = self.get_email(&s.id).await?;
+            messages.push(crate::recording::RecordedMessage {
+                envelope: crate::recording::RecordedEnvelope {
+                    mail_from: detail.from.clone(),
+                    rcpt_to: detail.to.clone(),
+                    received_at: detail.received_at,
+                    ext_smtputf8: detail.ext_smtputf8,
+                    ext_8bitmime: detail.ext_8bitmime,
+                    subject: detail.subject.clone(),
+                },
+                raw_b64: crate::recording::encode_raw(&raw),
+            });
+        }
+        Ok(crate::recording::Recording {
+            version: crate::recording::RECORDING_VERSION,
+            exported_at: chrono::Utc::now().timestamp_millis(),
+            label,
+            messages,
+        })
+    }
+
+    /// Replay a recording's messages straight into a mailbox by
+    /// pushing them through the ingest worker. SMTP listeners,
+    /// chaos, and bounce rules are bypassed — this is for fixture
+    /// restoration (FR-TEST-31), not for re-running a scenario.
+    /// Use [`Self::replay_email`] for a single SMTP-driven re-send.
+    pub async fn replay_recording(
+        &self,
+        mailbox_id: &str,
+        recording: &crate::recording::Recording,
+    ) -> Result<u64> {
+        recording.validate()?;
+        let _ = db_mb::get(&self.inner.pool, mailbox_id).await?;
+        let mailbox_id_owned = mailbox_id.to_string();
+        let ingest_tx = self.inner.mailboxes.ingest_tx();
+        let incoming_dir = self.inner.config.incoming_dir();
+        tokio::fs::create_dir_all(&incoming_dir).await?;
+
+        let mut count: u64 = 0;
+        for msg in &recording.messages {
+            let raw = crate::recording::decode_raw(msg)?;
+            // Spill the bytes to a temp file so the ingest worker
+            // picks up an OnDisk source (matches the real DATA path
+            // for messages > spill threshold; behavior is identical
+            // for smaller payloads).
+            let tmp = incoming_dir.join(format!("{}.tmp", uuid::Uuid::new_v4()));
+            tokio::fs::write(&tmp, &raw).await?;
+            let size = raw.len() as u64;
+            let env = crate::smtp::session::CapturedEnvelope {
+                mailbox_id: mailbox_id_owned.clone(),
+                received_at: msg.envelope.received_at,
+                mail_from: msg.envelope.mail_from.clone(),
+                rcpt_to: msg.envelope.rcpt_to.clone(),
+                raw: crate::smtp::data_reader::CapturedSource::OnDisk(tmp, size),
+                ext_smtputf8: msg.envelope.ext_smtputf8,
+                ext_8bitmime: msg.envelope.ext_8bitmime,
+            };
+            ingest_tx
+                .send(env)
+                .await
+                .map_err(|e| crate::error::Error::Internal(format!("ingest closed: {e}")))?;
+            count += 1;
+        }
+        self.audit(
+            "user",
+            "recording.replay",
+            Some("mailbox"),
+            Some(mailbox_id),
+            Some(serde_json::json!({"count": count})),
+        )
+        .await;
+        Ok(count)
+    }
+
+    /// Re-inject one captured email's raw bytes into a (possibly
+    /// different) mailbox via the local SMTP listener — exercises
+    /// chaos + bounce rules + parsing the way a real send would.
+    pub async fn replay_email(&self, id: &str, target_mailbox_id: &str) -> Result<()> {
+        let detail = self.get_email(id).await?;
+        let raw = self.get_email_raw(id).await?;
+        let addr = self
+            .inner
+            .mailboxes
+            .listener_addr(target_mailbox_id)
+            .ok_or_else(|| crate::error::Error::MailboxNotFound(target_mailbox_id.into()))?;
+        let from = if detail.from.is_empty() {
+            "postcrate@localhost".to_string()
+        } else {
+            detail.from.clone()
+        };
+        let rcpts = if detail.to.is_empty() {
+            vec!["postcrate@localhost".to_string()]
+        } else {
+            detail.to.clone()
+        };
+        crate::smtp::relay::relay_message(
+            &crate::RelayConfig {
+                host: addr.ip().to_string(),
+                port: addr.port(),
+                timeout_seconds: Some(10),
+            },
+            &from,
+            &rcpts,
+            &raw,
+        )
+        .await?;
+        self.audit(
+            "user",
+            "email.replay",
+            Some("email"),
+            Some(id),
+            Some(serde_json::json!({"targetMailbox": target_mailbox_id})),
+        )
+        .await;
+        Ok(())
+    }
+
+    // ---- Wait / Match ----
+
+    /// Block up to `timeout` for an email that satisfies `predicate`.
+    ///
+    /// Sequence:
+    ///   1. Subscribe to the event stream first (so we don't miss an
+    ///      email that arrives between scan + subscribe).
+    ///   2. Do a one-shot scan of recent emails in case it already
+    ///      arrived before the call.
+    ///   3. Otherwise consume the broadcast until timeout.
+    ///
+    /// The returned [`crate::matcher::WaitOutcome`] always carries the
+    /// list of emails seen during the wait, so callers can distinguish
+    /// "no email at all" from "email arrived but didn't match".
+    pub async fn wait_for_email(
+        &self,
+        predicate: crate::matcher::EmailPredicate,
+        timeout: std::time::Duration,
+    ) -> Result<crate::matcher::WaitOutcome> {
+        use crate::events::CoreEvent;
+        use tokio::sync::broadcast::error::RecvError;
+        use tokio::time::Instant;
+
+        let mut rx = self.subscribe();
+        let mut seen: Vec<EmailSummary> = Vec::new();
+
+        // Initial scan — most recent 100 emails in scope.
+        let initial = self.scan_for_match(&predicate, 100).await?;
+        if let Some(d) = initial.matched {
+            return Ok(crate::matcher::WaitOutcome {
+                matched: Some(d),
+                seen_during_wait: initial.seen,
+            });
+        }
+        seen.extend(initial.seen);
+
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(crate::matcher::WaitOutcome {
+                    matched: None,
+                    seen_during_wait: seen,
+                });
+            }
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Err(_) => {
+                    return Ok(crate::matcher::WaitOutcome {
+                        matched: None,
+                        seen_during_wait: seen,
+                    });
+                }
+                Ok(Err(RecvError::Closed)) => {
+                    return Ok(crate::matcher::WaitOutcome {
+                        matched: None,
+                        seen_during_wait: seen,
+                    });
+                }
+                Ok(Err(RecvError::Lagged(_))) => {
+                    // Catch up via a full scan and keep looping.
+                    let catch = self.scan_for_match(&predicate, 100).await?;
+                    if catch.matched.is_some() {
+                        return Ok(crate::matcher::WaitOutcome {
+                            matched: catch.matched,
+                            seen_during_wait: seen,
+                        });
+                    }
+                    continue;
+                }
+                Ok(Ok(CoreEvent::NewEmail { mailbox_id, email })) => {
+                    if predicate.mailbox_id.as_ref().is_some_and(|m| m != &mailbox_id) {
+                        continue;
+                    }
+                    if predicate.matches_summary(&email) {
+                        let detail = self.get_email(&email.id).await?;
+                        if predicate.check(&detail).matched {
+                            return Ok(crate::matcher::WaitOutcome {
+                                matched: Some(detail),
+                                seen_during_wait: seen,
+                            });
+                        }
+                    }
+                    seen.push(email);
+                }
+                Ok(Ok(_)) => continue,
+            }
+        }
+    }
+
+    /// Check a specific email against a predicate. The full
+    /// [`crate::matcher::MatchResult`] is returned (including any
+    /// mismatches) so callers can produce a structured diff.
+    pub async fn assert_email_matches(
+        &self,
+        id: &str,
+        predicate: &crate::matcher::EmailPredicate,
+    ) -> Result<crate::matcher::MatchResult> {
+        let detail = self.get_email(id).await?;
+        Ok(predicate.check(&detail))
+    }
+
+    /// Implementation detail of [`Self::wait_for_email`]: scan up to
+    /// `limit` most-recent emails (across all mailboxes, or filtered
+    /// by `predicate.mailbox_id`) and return either the first match
+    /// or the list of all candidates seen.
+    async fn scan_for_match(
+        &self,
+        predicate: &crate::matcher::EmailPredicate,
+        limit: u32,
+    ) -> Result<ScanResult> {
+        let summaries = match &predicate.mailbox_id {
+            Some(mb) => db_emails::list(&self.inner.pool, mb, limit, 0).await?,
+            None => db_emails::list_recent_across(&self.inner.pool, limit).await?,
+        };
+        let mut seen = Vec::new();
+        for s in summaries {
+            if !predicate.matches_summary(&s) {
+                seen.push(s);
+                continue;
+            }
+            let detail = self.get_email(&s.id).await?;
+            if predicate.check(&detail).matched {
+                return Ok(ScanResult { matched: Some(detail), seen });
+            }
+            seen.push(s);
+        }
+        Ok(ScanResult { matched: None, seen })
     }
 
     // ---- Audit ----

@@ -23,6 +23,7 @@ tls = ["dep:tokio-rustls", "dep:rustls-pemfile"]
 [dependencies]
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
 bytes = { workspace = true }
 futures-util = { workspace = true }
 async-trait = { workspace = true }
@@ -51,6 +52,8 @@ rand_chacha = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
+regex = { workspace = true }
+base64 = { workspace = true }
 
 tokio-rustls = { workspace = true, optional = true }
 rustls-pemfile = { workspace = true, optional = true }
@@ -58,6 +61,7 @@ rustls-pemfile = { workspace = true, optional = true }
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "process"] }
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
 tempfile = "3"
+rcgen = "0.13"
 

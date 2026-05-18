@@ -29,7 +29,12 @@
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod matcher;
+pub mod recording;
+pub mod rendering;
+pub mod scenarios;
 pub mod service;
+pub mod tagging;
 
 pub(crate) mod db;
 pub(crate) mod http;
@@ -81,4 +86,8 @@ pub use crate::events::{
     BounceKind, ChannelSink, CoreEvent, EventSink, LogSink, MailboxStateChange, ServerStatus,
 };
 pub use crate::mailbox::kinds::MailboxKind;
+pub use crate::matcher::{EmailPredicate, HeaderPredicate, MatchResult, WaitOutcome};
+pub use crate::recording::{Recording, RecordedEnvelope, RecordedMessage, RECORDING_VERSION};
+pub use crate::smtp::relay::RelayConfig;
+pub use crate::tagging::EmailTag;
 pub use crate::service::Service;

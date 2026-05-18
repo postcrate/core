@@ -20,6 +20,9 @@ pub struct EmailSummary {
     pub has_text: bool,
     pub size_bytes: i64,
     pub read: bool,
+    pub pinned: bool,
+    pub starred: bool,
+    pub tag: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +48,10 @@ pub struct EmailDetail {
     pub has_text: bool,
     pub size_bytes: i64,
     pub read: bool,
+    pub pinned: bool,
+    pub starred: bool,
+    pub note: Option<String>,
+    pub tag: Option<String>,
     pub headers: serde_json::Value,
     pub text_body: Option<String>,
     pub html_body: Option<String>,
@@ -77,6 +84,8 @@ pub(crate) struct EmailInsert {
     pub attachments: Vec<AttachmentInsert>,
     /// For FTS: searchable body — text part if present, else html stripped.
     pub fts_body: String,
+    /// Auto-detected category (FR-UX-30). `None` skips classification.
+    pub tag: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,8 +111,8 @@ pub(crate) async fn insert(pool: &SqlitePool, email: EmailInsert) -> Result<Inse
             header_from, header_to, header_cc, header_subject,
             message_id, in_reply_to,
             size_bytes, has_html, has_text, raw_path, parsed_json,
-            read_flag, ext_smtputf8, ext_8bitmime
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+            read_flag, ext_smtputf8, ext_8bitmime, tag
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&email.mailbox_id)
@@ -123,6 +132,7 @@ pub(crate) async fn insert(pool: &SqlitePool, email: EmailInsert) -> Result<Inse
     .bind(&parsed_json_str)
     .bind(i64::from(email.ext_smtputf8))
     .bind(i64::from(email.ext_8bitmime))
+    .bind(&email.tag)
     .execute(&mut *tx)
     .await?;
 
@@ -171,9 +181,37 @@ pub(crate) async fn insert(pool: &SqlitePool, email: EmailInsert) -> Result<Inse
         has_text: email.has_text,
         size_bytes: email.size_bytes,
         read: false,
+        pinned: false,
+        starred: false,
+        tag: email.tag.clone(),
     };
 
     Ok(InsertOutcome { id, summary })
+}
+
+/// Most-recent `limit` summaries across *all* mailboxes, newest first.
+/// Used by `Service::wait_for_email` when the caller didn't specify a
+/// mailbox filter.
+pub(crate) async fn list_recent_across(
+    pool: &SqlitePool,
+    limit: u32,
+) -> Result<Vec<EmailSummary>> {
+    let rows = sqlx::query(
+        r"SELECT id, mailbox_id, received_at, smtp_from, smtp_to_json,
+                 header_subject, has_html, has_text, size_bytes, read_flag,
+                 pinned, starred, tag
+          FROM emails
+          ORDER BY received_at DESC
+          LIMIT ?",
+    )
+    .bind(i64::from(limit))
+    .fetch_all(pool)
+    .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(row_to_summary(&row)?);
+    }
+    Ok(out)
 }
 
 pub(crate) async fn list(
@@ -182,12 +220,14 @@ pub(crate) async fn list(
     limit: u32,
     offset: u32,
 ) -> Result<Vec<EmailSummary>> {
+    // Pinned emails sort first regardless of received_at (FR-UX-40).
     let rows = sqlx::query(
         r"SELECT id, mailbox_id, received_at, smtp_from, smtp_to_json,
-                 header_subject, has_html, has_text, size_bytes, read_flag
+                 header_subject, has_html, has_text, size_bytes, read_flag,
+                 pinned, starred, tag
           FROM emails
           WHERE mailbox_id = ?
-          ORDER BY received_at DESC
+          ORDER BY pinned DESC, received_at DESC
           LIMIT ? OFFSET ?",
     )
     .bind(mailbox_id)
@@ -208,7 +248,7 @@ pub(crate) async fn get_detail(pool: &SqlitePool, id: &str) -> Result<EmailDetai
         r"SELECT id, mailbox_id, received_at, smtp_from, smtp_to_json,
                  header_subject, message_id, in_reply_to,
                  has_html, has_text, size_bytes, parsed_json, read_flag,
-                 ext_smtputf8, ext_8bitmime
+                 ext_smtputf8, ext_8bitmime, pinned, starred, note, tag
           FROM emails WHERE id = ?",
     )
     .bind(id)
@@ -254,6 +294,16 @@ pub(crate) async fn get_detail(pool: &SqlitePool, id: &str) -> Result<EmailDetai
         in_reply_to: row.try_get("in_reply_to").ok(),
         ext_smtputf8: row.try_get::<i64, _>("ext_smtputf8").unwrap_or(0) != 0,
         ext_8bitmime: row.try_get::<i64, _>("ext_8bitmime").unwrap_or(0) != 0,
+        pinned: row.try_get::<i64, _>("pinned").unwrap_or(0) != 0,
+        starred: row.try_get::<i64, _>("starred").unwrap_or(0) != 0,
+        note: row
+            .try_get::<Option<String>, _>("note")
+            .ok()
+            .flatten(),
+        tag: row
+            .try_get::<Option<String>, _>("tag")
+            .ok()
+            .flatten(),
     })
 }
 
@@ -288,12 +338,22 @@ pub(crate) async fn delete(pool: &SqlitePool, id: &str) -> Result<String> {
 }
 
 /// Clear a mailbox. Returns (deleted_count, raw_paths_to_delete).
+///
+/// When `preserve_pinned` is true (the default in the Service layer),
+/// rows with `pinned = 1` survive — FR-UX-40 mandates that pin acts
+/// as a "keep this across inbox clears" marker.
 pub(crate) async fn clear_mailbox(
     pool: &SqlitePool,
     mailbox_id: &str,
+    preserve_pinned: bool,
 ) -> Result<(u64, Vec<String>)> {
     let mut tx = pool.begin().await?;
-    let rows = sqlx::query("SELECT id, raw_path FROM emails WHERE mailbox_id = ?")
+    let select_sql = if preserve_pinned {
+        "SELECT id, raw_path FROM emails WHERE mailbox_id = ? AND pinned = 0"
+    } else {
+        "SELECT id, raw_path FROM emails WHERE mailbox_id = ?"
+    };
+    let rows = sqlx::query(select_sql)
         .bind(mailbox_id)
         .fetch_all(&mut *tx)
         .await?;
@@ -307,7 +367,12 @@ pub(crate) async fn clear_mailbox(
             .await?;
         paths.push(path);
     }
-    let res = sqlx::query("DELETE FROM emails WHERE mailbox_id = ?")
+    let delete_sql = if preserve_pinned {
+        "DELETE FROM emails WHERE mailbox_id = ? AND pinned = 0"
+    } else {
+        "DELETE FROM emails WHERE mailbox_id = ?"
+    };
+    let res = sqlx::query(delete_sql)
         .bind(mailbox_id)
         .execute(&mut *tx)
         .await?;
@@ -404,6 +469,10 @@ pub(crate) async fn list_older_than(
 }
 
 /// Trim a mailbox down to `keep_max` newest rows; return ids/paths to remove.
+///
+/// Pinned rows are never trimmed — they don't count toward `keep_max`
+/// and they're excluded from the candidate-for-deletion set. This
+/// matches FR-UX-40 (pin survives retention).
 pub(crate) async fn trim_mailbox(
     pool: &SqlitePool,
     mailbox_id: &str,
@@ -412,9 +481,11 @@ pub(crate) async fn trim_mailbox(
     let rows = sqlx::query(
         r"SELECT id, raw_path FROM emails
           WHERE mailbox_id = ?
+            AND pinned = 0
             AND id NOT IN (
                 SELECT id FROM emails
                 WHERE mailbox_id = ?
+                  AND pinned = 0
                 ORDER BY received_at DESC
                 LIMIT ?
             )",
@@ -477,7 +548,49 @@ fn row_to_summary(row: &sqlx::sqlite::SqliteRow) -> Result<EmailSummary> {
         has_text: row.try_get::<i64, _>("has_text").unwrap_or(0) != 0,
         size_bytes: row.try_get("size_bytes").unwrap_or(0),
         read: row.try_get::<i64, _>("read_flag").unwrap_or(0) != 0,
+        pinned: row.try_get::<i64, _>("pinned").unwrap_or(0) != 0,
+        starred: row.try_get::<i64, _>("starred").unwrap_or(0) != 0,
+        tag: row
+            .try_get::<Option<String>, _>("tag")
+            .ok()
+            .flatten(),
     })
+}
+
+pub(crate) async fn set_pinned(pool: &SqlitePool, id: &str, pinned: bool) -> Result<()> {
+    let res = sqlx::query("UPDATE emails SET pinned = ? WHERE id = ?")
+        .bind(i64::from(pinned))
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(Error::EmailNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
+pub(crate) async fn set_starred(pool: &SqlitePool, id: &str, starred: bool) -> Result<()> {
+    let res = sqlx::query("UPDATE emails SET starred = ? WHERE id = ?")
+        .bind(i64::from(starred))
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(Error::EmailNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
+pub(crate) async fn set_note(pool: &SqlitePool, id: &str, note: Option<&str>) -> Result<()> {
+    let res = sqlx::query("UPDATE emails SET note = ? WHERE id = ?")
+        .bind(note)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(Error::EmailNotFound(id.to_string()));
+    }
+    Ok(())
 }
 
 /// Drop anything that could be interpreted as FTS5 query syntax. We

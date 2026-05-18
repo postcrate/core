@@ -21,6 +21,10 @@ pub fn router() -> Router<ServiceHandle> {
         )
         .route("/messages/search", post(search))
         .route("/messages/{id}/read", post(mark_read))
+        .route("/messages/{id}/pin", post(set_pin))
+        .route("/messages/{id}/star", post(set_star))
+        .route("/messages/{id}/note", post(set_note))
+        .route("/messages/{id}/release", post(release))
 }
 
 async fn list(
@@ -118,6 +122,65 @@ async fn mark_read(
 ) -> Result<Json<serde_json::Value>> {
     h.as_service().mark_read(&id, body.read).await?;
     Ok(Json(serde_json::json!({"read": body.read})))
+}
+
+#[derive(serde::Deserialize)]
+struct PinBody {
+    pinned: bool,
+}
+
+async fn set_pin(
+    State(h): State<ServiceHandle>,
+    Path(id): Path<String>,
+    Json(body): Json<PinBody>,
+) -> Result<Json<serde_json::Value>> {
+    h.as_service().set_pinned(&id, body.pinned).await?;
+    Ok(Json(serde_json::json!({"pinned": body.pinned})))
+}
+
+#[derive(serde::Deserialize)]
+struct StarBody {
+    starred: bool,
+}
+
+async fn set_star(
+    State(h): State<ServiceHandle>,
+    Path(id): Path<String>,
+    Json(body): Json<StarBody>,
+) -> Result<Json<serde_json::Value>> {
+    h.as_service().set_starred(&id, body.starred).await?;
+    Ok(Json(serde_json::json!({"starred": body.starred})))
+}
+
+#[derive(serde::Deserialize)]
+struct NoteBody {
+    /// `null` clears the note.
+    note: Option<String>,
+}
+
+async fn set_note(
+    State(h): State<ServiceHandle>,
+    Path(id): Path<String>,
+    Json(body): Json<NoteBody>,
+) -> Result<Json<serde_json::Value>> {
+    h.as_service().set_note(&id, body.note.as_deref()).await?;
+    Ok(Json(serde_json::json!({"note": body.note})))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseBody {
+    to: String,
+    relay: crate::RelayConfig,
+}
+
+async fn release(
+    State(h): State<ServiceHandle>,
+    Path(id): Path<String>,
+    Json(body): Json<ReleaseBody>,
+) -> Result<Json<serde_json::Value>> {
+    h.as_service().release_email(&id, &body.to, &body.relay).await?;
+    Ok(Json(serde_json::json!({"released": true, "to": body.to})))
 }
 
 impl From<axum::http::Error> for Error {

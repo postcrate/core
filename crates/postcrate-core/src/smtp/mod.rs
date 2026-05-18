@@ -11,6 +11,7 @@ pub mod command;
 pub mod data_reader;
 pub mod extensions;
 pub mod listener;
+pub mod relay;
 pub mod response;
 pub mod session;
 pub mod tls;

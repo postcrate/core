@@ -259,6 +259,13 @@ impl MailboxService {
         self.listeners.get(mailbox_id).map(|h| h.addr)
     }
 
+    /// Clone the ingest sender so callers can push synthetic envelopes
+    /// (recording replay, future MCP/CLI fixtures) through the same
+    /// single-writer pipeline that the real SMTP path uses.
+    pub fn ingest_tx(&self) -> mpsc::Sender<CapturedEnvelope> {
+        self.ingest_tx.clone()
+    }
+
     /// Pick a fresh ephemeral port. We pull the in-use set under a lock,
     /// release it, do the async probe outside the lock, then re-lock just
     /// to record the reservation.
@@ -298,6 +305,11 @@ impl MailboxService {
             hostname: self.config.ehlo_hostname.clone(),
             max_size: self.config.max_message_bytes,
             starttls_enabled: self.tls_acceptor.is_some(),
+            // AUTH is advertised by default for client compatibility.
+            // Mailpit does the same — local capture servers don't need
+            // to authenticate but many sender libraries refuse to send
+            // unless AUTH is offered.
+            auth_enabled: true,
         };
 
         // Reuse the existing bounce-evaluator handle if we have one;
