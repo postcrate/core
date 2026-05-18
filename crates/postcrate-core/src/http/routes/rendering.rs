@@ -1,4 +1,4 @@
-//! Rendering preview + lint endpoints (FR-RENDER).
+//! Rendering preview + lint endpoints.
 
 use axum::extract::{Path, Query, State};
 use axum::routing::get;

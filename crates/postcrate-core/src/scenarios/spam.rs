@@ -1,8 +1,8 @@
-//! Local-only spam scoring (FR-SCENARIO-20).
+//! Local-only spam scoring.
 //!
 //! A SpamAssassin-equivalent set of cheap heuristics. We deliberately
 //! avoid anything that requires network (DNS RBL lookups, remote
-//! reputation services) per NFR-PRIV-01. Each rule contributes a
+//! reputation services). Each rule contributes a
 //! small score; sum > 5.0 is reported as "likely spam". Callers
 //! decide how to render the result.
 //!

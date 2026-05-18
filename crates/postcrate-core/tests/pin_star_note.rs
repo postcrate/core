@@ -1,4 +1,4 @@
-//! Pin / star / note + clear-preserves-pinned (FR-UX-40, FR-UX-50).
+//! Pin / star / note + clear-preserves-pinned.
 
 mod common;
 

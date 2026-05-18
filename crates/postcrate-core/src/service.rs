@@ -333,7 +333,7 @@ impl Service {
     }
 
     /// Clear all non-pinned emails from a mailbox. Pinned emails (set
-    /// via [`Self::set_pinned`]) survive per FR-UX-40. Use
+    /// via [`Self::set_pinned`]) survive. Use
     /// [`Self::purge_mailbox`] to wipe everything including pinned.
     pub async fn clear_mailbox(&self, mailbox_id: &str) -> Result<u64> {
         let (n, paths) = db_emails::clear_mailbox(&self.inner.pool, mailbox_id, true).await?;
@@ -537,7 +537,7 @@ impl Service {
 
     // ---- Scenarios ----
 
-    /// Score a captured email's spam-likelihood (FR-SCENARIO-20).
+    /// Score a captured email's spam-likelihood.
     /// Local heuristics only; no network.
     pub async fn analyze_spam(
         &self,
@@ -548,7 +548,7 @@ impl Service {
     }
 
     /// Extract + classify every link in a captured email
-    /// (FR-SCENARIO-40). Does not HEAD-check links.
+    ///. Does not HEAD-check links.
     pub async fn analyze_links(
         &self,
         id: &str,
@@ -558,7 +558,7 @@ impl Service {
     }
 
     /// Inspect SPF / DKIM / DMARC headers and predict pass/fail
-    /// (FR-SCENARIO-30). Header inspection only.
+    ///. Header inspection only.
     pub async fn analyze_auth(
         &self,
         id: &str,
@@ -589,7 +589,7 @@ impl Service {
     // ---- Rendering ----
 
     /// Render the email's HTML body through a client profile
-    /// (FR-RENDER-01). Returns the transformed HTML + a list of
+    ///. Returns the transformed HTML + a list of
     /// transforms that ran.
     pub async fn render_preview(
         &self,
@@ -601,15 +601,14 @@ impl Service {
         Ok(crate::rendering::profile::apply(&html, profile))
     }
 
-    /// Lint the email's HTML for known client incompatibilities
-    /// (FR-RENDER-10).
+    /// Lint the email's HTML for known client incompatibilities.
     pub async fn lint_html(&self, id: &str) -> Result<crate::rendering::lint::LintReport> {
         let detail = self.get_email(id).await?;
         let html = detail.html_body.unwrap_or_default();
         Ok(crate::rendering::lint::lint(&html))
     }
 
-    /// Accessibility check on the email's HTML (FR-RENDER-30).
+    /// Accessibility check on the email's HTML.
     pub async fn audit_a11y(&self, id: &str) -> Result<crate::rendering::a11y::A11yReport> {
         let detail = self.get_email(id).await?;
         let html = detail.html_body.unwrap_or_default();
@@ -619,7 +618,7 @@ impl Service {
     // ---- Recordings ----
 
     /// Snapshot every email in a mailbox into a portable
-    /// `.postcrate` recording (FR-TEST-30). The result serializes to
+    /// `.postcrate` recording. The result serializes to
     /// JSON via serde; the caller is responsible for persisting it.
     pub async fn export_recording(
         &self,
@@ -660,7 +659,7 @@ impl Service {
     /// Replay a recording's messages straight into a mailbox by
     /// pushing them through the ingest worker. SMTP listeners,
     /// chaos, and bounce rules are bypassed — this is for fixture
-    /// restoration (FR-TEST-31), not for re-running a scenario.
+    /// restoration, not for re-running a scenario.
     /// Use [`Self::replay_email`] for a single SMTP-driven re-send.
     pub async fn replay_recording(
         &self,

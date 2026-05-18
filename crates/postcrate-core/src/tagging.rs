@@ -1,4 +1,4 @@
-//! Auto-tagging for FR-UX-30.
+//! Auto-tagging.
 //!
 //! Classifies each captured email as one of:
 //!   - `transactional_auth`     — password reset, sign-in code, 2FA, account verify

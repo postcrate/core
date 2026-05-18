@@ -1,4 +1,4 @@
-//! `.postcrate` recording format (FR-TEST-30/31/32).
+//! `.postcrate` recording format (/31/32).
 //!
 //! A recording captures a sequence of received emails — their
 //! envelopes plus base64-encoded raw bytes — into a single JSON

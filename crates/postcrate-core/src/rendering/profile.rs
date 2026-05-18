@@ -2,7 +2,7 @@
 //!
 //! Each profile gets an HTML blob and returns it with the client's
 //! known limitations applied. We deliberately ship a small number of
-//! high-quality profiles per FR-RENDER-02 ("ship fewer profiles at
+//! high-quality profiles ("ship fewer profiles at
 //! higher fidelity rather than more at lower"). The transforms are
 //! deterministic regex/HTML rewrites — no headless browser, no
 //! network.
@@ -39,7 +39,7 @@ impl Profile {
         }
     }
 
-    /// Honest fidelity report (FR-RENDER-02).
+    /// Honest fidelity report.
     pub fn fidelity(self) -> Fidelity {
         match self {
             // Apple Mail uses WebKit; render is closest to a stock browser.

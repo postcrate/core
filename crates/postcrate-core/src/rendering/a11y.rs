@@ -1,4 +1,4 @@
-//! Accessibility linter (FR-RENDER-30).
+//! Accessibility linter.
 //!
 //! Light, source-level checks. Two thresholds: a *warning* surfaces
 //! a problem in the UI's badge; an *error* is something that would

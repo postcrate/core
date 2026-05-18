@@ -84,7 +84,7 @@ pub(crate) struct EmailInsert {
     pub attachments: Vec<AttachmentInsert>,
     /// For FTS: searchable body — text part if present, else html stripped.
     pub fts_body: String,
-    /// Auto-detected category (FR-UX-30). `None` skips classification.
+    /// Auto-detected category. `None` skips classification.
     pub tag: Option<String>,
 }
 
@@ -220,7 +220,7 @@ pub(crate) async fn list(
     limit: u32,
     offset: u32,
 ) -> Result<Vec<EmailSummary>> {
-    // Pinned emails sort first regardless of received_at (FR-UX-40).
+    // Pinned emails sort first regardless of received_at.
     let rows = sqlx::query(
         r"SELECT id, mailbox_id, received_at, smtp_from, smtp_to_json,
                  header_subject, has_html, has_text, size_bytes, read_flag,
@@ -340,7 +340,7 @@ pub(crate) async fn delete(pool: &SqlitePool, id: &str) -> Result<String> {
 /// Clear a mailbox. Returns (deleted_count, raw_paths_to_delete).
 ///
 /// When `preserve_pinned` is true (the default in the Service layer),
-/// rows with `pinned = 1` survive — FR-UX-40 mandates that pin acts
+/// rows with `pinned = 1` survive — mandates that pin acts
 /// as a "keep this across inbox clears" marker.
 pub(crate) async fn clear_mailbox(
     pool: &SqlitePool,
@@ -472,7 +472,7 @@ pub(crate) async fn list_older_than(
 ///
 /// Pinned rows are never trimmed — they don't count toward `keep_max`
 /// and they're excluded from the candidate-for-deletion set. This
-/// matches FR-UX-40 (pin survives retention).
+/// (pin survives retention).
 pub(crate) async fn trim_mailbox(
     pool: &SqlitePool,
     mailbox_id: &str,

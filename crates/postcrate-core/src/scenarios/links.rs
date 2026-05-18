@@ -1,7 +1,7 @@
-//! Link extraction + classification for FR-SCENARIO-40.
+//! Link extraction + classification.
 //!
 //! Pure local parsing — we do **not** HEAD-check links by default
-//! (NFR-PRIV-01). Each link gets a structured verdict for the UI:
+//!. Each link gets a structured verdict for the UI:
 //! is it `http://` (insecure)? Does it look like a tracking
 //! redirect? Is it likely a mailto/tel that should render
 //! differently? Optional online check is a separate API the caller

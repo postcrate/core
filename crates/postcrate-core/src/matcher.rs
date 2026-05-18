@@ -1,12 +1,10 @@
 //! Email predicates + structured matching.
 //!
 //! Shared primitive used by:
-//!   - the MCP `wait_for_email` and `assert_email_matches` tools
-//!     (FR-AI-04, FR-AI-05),
-//!   - the CLI `wait` subcommand (FR-AI-10),
-//!   - the matcher packages' `waitForEmail` / `toContainEmail`
-//!     helpers (FR-TEST-40),
-//!   - the HTTP "did it send" diagnostic endpoint (FR-AI-20).
+//!   - the MCP `wait_for_email` and `assert_email_matches` tools,
+//!   - the CLI `wait` subcommand,
+//!   - the matcher packages' `waitForEmail` / `toContainEmail` helpers,
+//!   - the HTTP "did it send" diagnostic endpoint.
 //!
 //! One type, two uses: cheap `matches_summary` for live-stream
 //! filtering against the lightweight `EmailSummary`, and full

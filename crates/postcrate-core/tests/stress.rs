@@ -4,7 +4,7 @@
 //!
 //! Default volume is sized to be quick under `cargo test`. Set the
 //! `POSTCRATE_STRESS_N` env var to override (e.g. `=10000` for the
-//! roadmap target). The roadmap's NFR-PERF-01 (<200ms p99 capture
+//! roadmap target). The roadmap's (<200ms p99 capture
 //! latency) is measured at the larger volume.
 
 mod common;

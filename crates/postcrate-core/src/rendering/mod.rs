@@ -1,4 +1,4 @@
-//! Multi-client rendering preview engine (FR-RENDER-01..40).
+//! Multi-client rendering preview engine (..40).
 //!
 //! Three concerns live here:
 //!

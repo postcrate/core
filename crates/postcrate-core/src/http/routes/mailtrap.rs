@@ -1,4 +1,4 @@
-//! Mailtrap-compatible read API (FR-ADOPT-10).
+//! Mailtrap-compatible read API.
 //!
 //! Goal: existing Mailtrap-integrated test code keeps working when
 //! `MAILTRAP_API_URL` is swapped to Postcrate. We mirror the most

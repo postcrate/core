@@ -20,7 +20,7 @@ use crate::service::ServiceHandle;
 struct WaitBody {
     #[serde(default)]
     predicate: EmailPredicate,
-    /// 1–300 seconds; default 30 (matches FR-AI-04). Values are clamped.
+    /// 1–300 seconds; default 30 (matches ). Values are clamped.
     timeout_seconds: Option<u32>,
 }
 

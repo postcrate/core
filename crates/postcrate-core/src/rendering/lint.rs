@@ -1,4 +1,4 @@
-//! HTML linter for captured emails (FR-RENDER-10).
+//! HTML linter for captured emails.
 //!
 //! Each rule is a cheap text pattern + a single human sentence. We
 //! deliberately avoid HTML parsing: we want this to run on every

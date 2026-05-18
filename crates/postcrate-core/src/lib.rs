@@ -1,12 +1,42 @@
-//! # postcrate-core
+//! Tokio-native SMTP capture engine for local development, integration
+//! tests, and CI.
 //!
-//! Standalone mail engine: a Tokio-native SMTP capture server with a local
-//! HTTP API, multi-mailbox lifecycle, chaos simulation, and SQLite
-//! persistence. Has no dependency on Tauri or any UI framework — consumers
-//! plug in their own `EventSink` implementation.
+//! `postcrate-core` listens for SMTP, parses incoming mail, stores it in
+//! SQLite, and exposes everything over a small HTTP API. It has no
+//! dependency on a UI or on any third-party mail service.
 //!
-//! The public surface is intentionally narrow: one [`Service`] type and a
-//! handful of input/output structs. Everything else is `pub(crate)`.
+//! # Quick start
+//!
+//! ```no_run
+//! # async fn run() -> anyhow::Result<()> {
+//! use std::sync::Arc;
+//! use postcrate_core::{CoreConfig, LogSink, Service};
+//!
+//! let cfg = CoreConfig::for_data_dir("/tmp/postcrate")?;
+//! let service = Service::build(cfg, Arc::new(LogSink)).await?;
+//! service.start_all().await?;
+//! # service.stop_all().await?;
+//! # Ok(()) }
+//! ```
+//!
+//! After [`Service::start_all`], the configured SMTP listeners are
+//! accepting mail and the HTTP API is serving requests under `/api/v1`.
+//! Subscribe to live events by passing a custom [`EventSink`] instead of
+//! [`LogSink`].
+//!
+//! # Public surface
+//!
+//! The public API is deliberately narrow: the [`Service`] type plus a
+//! handful of input / output structs re-exported from this module.
+//! Everything else is `pub(crate)`. See the [`Service`] type for the
+//! full method set, and the `postcrate-docs` repository for the
+//! architecture notes, HTTP-API reference, and SMTP-extension table.
+//!
+//! # Crate features
+//!
+//! | Feature | Effect |
+//! |---------|--------|
+//! | `tls`   | Enables `STARTTLS` and implicit-TLS listeners (RFC 8314). Off by default. |
 
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations)]

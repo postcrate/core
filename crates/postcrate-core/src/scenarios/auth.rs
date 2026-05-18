@@ -1,4 +1,4 @@
-//! SPF / DKIM / DMARC inspection (FR-SCENARIO-30).
+//! SPF / DKIM / DMARC inspection.
 //!
 //! Strictly header-only — we do not perform DNS lookups. The output
 //! is framed as a *prediction*: "would pass at a typical receiver"
