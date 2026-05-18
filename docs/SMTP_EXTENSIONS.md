@@ -10,7 +10,7 @@
 | `SMTPUTF8` | RFC 6531. Byte-transparent; flag recorded on envelope so the UI can show "this message used internationalized addresses". |
 | `ENHANCEDSTATUSCODES` | RFC 2034. Advertised; we don't yet add the `x.y.z` enhanced codes to replies. Reserved for a later pass. |
 | `HELP` | Returns the list of supported commands on `HELP`. |
-| `STARTTLS` | **Not advertised today.** The `tls` feature flag is reserved; see `docs/ARCHITECTURE.md`. |
+| `STARTTLS` | RFC 3207. Advertised when the binary is built with `--features tls` *and* `CoreConfig::tls` is enabled with a valid cert/key. Without those, it's omitted from EHLO and a client request returns `454 TLS not available`. |
 
 ## Commands
 
@@ -25,7 +25,7 @@
 | `QUIT` | `221` + close. |
 | `VRFY` | `252 Cannot VRFY user; try RCPT` (RFC 5321 §3.5.3). |
 | `HELP` | Multi-line `214` listing supported verbs. |
-| `STARTTLS` | `502 Command not implemented` until the TLS phase. |
+| `STARTTLS` | When advertised: `220 Ready to start TLS`, then we hand the socket back to the listener for `rustls` to drive the handshake, and re-run the session on the TLS stream. Inside a TLS session, repeat `STARTTLS` returns `503 TLS already active` (RFC 3207 §4) and the EHLO advert drops the keyword. When unavailable: `454 TLS not available`. |
 | Anything else | `502 Command not implemented`. Out-of-sequence commands return `503 Bad sequence`. |
 
 ## Limits

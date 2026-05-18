@@ -87,6 +87,18 @@ impl SmtpReply {
     pub fn custom(code: u16, msg: impl Into<Cow<'static, str>>) -> Self {
         SmtpReply::new(code, msg)
     }
+
+    pub fn start_tls_ready() -> Self {
+        SmtpReply::new(220, "Ready to start TLS")
+    }
+
+    pub fn tls_not_available() -> Self {
+        SmtpReply::new(454, "TLS not available")
+    }
+
+    pub fn tls_already_active() -> Self {
+        SmtpReply::new(503, "TLS already active")
+    }
 }
 
 /// Writer wrapper that serializes a `SmtpReply` to the wire.

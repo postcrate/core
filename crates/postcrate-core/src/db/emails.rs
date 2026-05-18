@@ -143,18 +143,18 @@ pub(crate) async fn insert(pool: &SqlitePool, email: EmailInsert) -> Result<Inse
         .await?;
     }
 
-    // FTS sync — we keep `emails_fts` as a contentless external table.
-    // rowid is hashed from the id so deletes can find it without joins.
-    let rowid = fts_rowid(&id);
+    // FTS sync — emails_fts stores `email_id` as an UNINDEXED column
+    // (see migration 0004) so DELETE + SEARCH can both find rows by
+    // the email's UUID without a Rust-side rowid hash.
     sqlx::query(
-        r"INSERT INTO emails_fts(rowid, subject, sender, recipients, body)
+        r"INSERT INTO emails_fts(subject, sender, recipients, body, email_id)
           VALUES (?, ?, ?, ?, ?)",
     )
-    .bind(rowid)
     .bind(&fts_subject)
     .bind(&fts_sender)
     .bind(&fts_recipients)
     .bind(&email.fts_body)
+    .bind(&id)
     .execute(&mut *tx)
     .await?;
 
@@ -279,8 +279,8 @@ pub(crate) async fn delete(pool: &SqlitePool, id: &str) -> Result<String> {
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM emails_fts WHERE rowid = ?")
-        .bind(fts_rowid(id))
+    sqlx::query("DELETE FROM emails_fts WHERE email_id = ?")
+        .bind(id)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -301,8 +301,8 @@ pub(crate) async fn clear_mailbox(
     for r in &rows {
         let id: String = r.try_get("id").unwrap_or_default();
         let path: String = r.try_get("raw_path").unwrap_or_default();
-        sqlx::query("DELETE FROM emails_fts WHERE rowid = ?")
-            .bind(fts_rowid(&id))
+        sqlx::query("DELETE FROM emails_fts WHERE email_id = ?")
+            .bind(&id)
             .execute(&mut *tx)
             .await?;
         paths.push(path);
@@ -333,70 +333,49 @@ pub(crate) async fn search(
     mailbox_id: Option<&str>,
     limit: u32,
 ) -> Result<Vec<EmailSummary>> {
-    // Sanitize: FTS5 query syntax allows weird operators; for the v1 API,
-    // we treat the user input as a phrase prefix search.
     let cleaned = sanitize_fts(q);
     if cleaned.is_empty() {
         return Ok(Vec::new());
     }
-    let sql = if mailbox_id.is_some() {
-        r"SELECT e.id, e.mailbox_id, e.received_at, e.smtp_from, e.smtp_to_json,
-                 e.header_subject, e.has_html, e.has_text, e.size_bytes, e.read_flag
-          FROM emails_fts f
-          JOIN emails e ON e.id = (
-              SELECT id FROM emails WHERE rowid_hash(e_id) = f.rowid LIMIT 1
-          )
-          WHERE emails_fts MATCH ? AND e.mailbox_id = ?
-          ORDER BY e.received_at DESC
-          LIMIT ?"
+    let fts_query = build_fts_query(&cleaned);
+    if fts_query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let rows = if let Some(mb) = mailbox_id {
+        sqlx::query(
+            r"SELECT e.id, e.mailbox_id, e.received_at, e.smtp_from, e.smtp_to_json,
+                     e.header_subject, e.has_html, e.has_text, e.size_bytes, e.read_flag
+              FROM emails_fts f
+              JOIN emails e ON e.id = f.email_id
+              WHERE emails_fts MATCH ?1 AND e.mailbox_id = ?2
+              ORDER BY e.received_at DESC
+              LIMIT ?3",
+        )
+        .bind(&fts_query)
+        .bind(mb)
+        .bind(i64::from(limit))
+        .fetch_all(pool)
+        .await?
     } else {
-        // Simpler: we joined on hash. Since SQLite doesn't have a
-        // rowid_hash function out of the box, we instead store the
-        // mapping by joining on a stable hash computed in Rust. The
-        // trick: when inserting, we set fts.rowid = hash(email_id). When
-        // searching, we collect matched rowids, then map them back to
-        // ids via a Rust-side cache. To keep the surface simple here we
-        // fall back to a LIKE search if no FTS match is found.
-        r"SELECT e.id, e.mailbox_id, e.received_at, e.smtp_from, e.smtp_to_json,
-                 e.header_subject, e.has_html, e.has_text, e.size_bytes, e.read_flag
-          FROM emails e
-          WHERE e.header_subject LIKE ? OR e.smtp_from LIKE ? OR e.smtp_to_json LIKE ?
-          ORDER BY e.received_at DESC
-          LIMIT ?"
+        sqlx::query(
+            r"SELECT e.id, e.mailbox_id, e.received_at, e.smtp_from, e.smtp_to_json,
+                     e.header_subject, e.has_html, e.has_text, e.size_bytes, e.read_flag
+              FROM emails_fts f
+              JOIN emails e ON e.id = f.email_id
+              WHERE emails_fts MATCH ?1
+              ORDER BY e.received_at DESC
+              LIMIT ?2",
+        )
+        .bind(&fts_query)
+        .bind(i64::from(limit))
+        .fetch_all(pool)
+        .await?
     };
 
-    // Because rowid_hash mapping requires a helper, take the LIKE fallback
-    // for v1. Hooking the FTS lookup with id-recovery is straightforward
-    // (store rowid<->id mapping inside the schema) — listed in TODO.md.
-    let like = format!("%{cleaned}%");
-    let mut q = sqlx::query(
-        r"SELECT e.id, e.mailbox_id, e.received_at, e.smtp_from, e.smtp_to_json,
-                 e.header_subject, e.has_html, e.has_text, e.size_bytes, e.read_flag
-          FROM emails e
-          WHERE (e.header_subject LIKE ?1 OR e.smtp_from LIKE ?1 OR e.smtp_to_json LIKE ?1)
-             OR e.id IN (
-                 SELECT id FROM emails WHERE id IN (
-                     SELECT id FROM emails ORDER BY received_at DESC LIMIT 5000
-                 )
-                 -- See TODO: integrate FTS once rowid<->id helper lands.
-             )
-          ORDER BY e.received_at DESC
-          LIMIT ?2",
-    );
-    q = q.bind(&like).bind(i64::from(limit));
-    let _unused = sql; // keep the FTS sketch around for the next pass
-
-    let rows = q.fetch_all(pool).await?;
-    let _mb = mailbox_id;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        let item = row_to_summary(&row)?;
-        if let Some(m) = mailbox_id {
-            if item.mailbox_id != m {
-                continue;
-            }
-        }
-        out.push(item);
+        out.push(row_to_summary(&row)?);
     }
     Ok(out)
 }
@@ -467,8 +446,8 @@ pub(crate) async fn delete_by_ids(pool: &SqlitePool, ids: &[String]) -> Result<(
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM emails_fts WHERE rowid = ?")
-            .bind(fts_rowid(id))
+        sqlx::query("DELETE FROM emails_fts WHERE email_id = ?")
+            .bind(id)
             .execute(&mut *tx)
             .await?;
     }
@@ -501,22 +480,29 @@ fn row_to_summary(row: &sqlx::sqlite::SqliteRow) -> Result<EmailSummary> {
     })
 }
 
-/// Stable 63-bit hash from a uuid id → FTS5 rowid. Collisions are
-/// astronomically unlikely for our sizes; if one happens we just
-/// surface stale matches and a delete still removes both rowids.
-pub(crate) fn fts_rowid(id: &str) -> i64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in id.as_bytes() {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    (h & 0x7fff_ffff_ffff_ffff) as i64
-}
-
+/// Drop anything that could be interpreted as FTS5 query syntax. We
+/// keep `.` `@` `_` because they appear in addresses and identifiers;
+/// the tokenizer treats them as separators anyway. We deliberately
+/// drop `-` because in an FTS5 expression an unquoted `-` is the NOT
+/// operator (`foo -bar` ≡ "foo AND NOT bar"), which surprises users
+/// who type hyphenated terms like `password-reset`.
 fn sanitize_fts(q: &str) -> String {
     q.chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || matches!(*c, '.' | '@' | '-' | '_'))
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || matches!(*c, '.' | '@' | '_'))
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+/// Turn the sanitized query into an FTS5 MATCH expression. Each token
+/// becomes a prefix term (`foo*`) so partial words match — `"alic"`
+/// finds emails containing "alice". Tokens combine with AND (the FTS5
+/// default), so multi-word queries narrow the result set.
+fn build_fts_query(cleaned: &str) -> String {
+    cleaned
+        .split_whitespace()
+        .filter(|t| !t.is_empty())
+        .map(|t| format!("{t}*"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }

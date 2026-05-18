@@ -25,6 +25,7 @@ use crate::smtp::chaos::ChaosInjector;
 use crate::smtp::extensions::EhloAdvert;
 use crate::smtp::listener::{self, ListenerHandle, ListenerSpec};
 use crate::smtp::session::CapturedEnvelope;
+use crate::smtp::tls::{self, TlsAcceptor};
 
 pub struct MailboxService {
     pool: SqlitePool,
@@ -35,6 +36,9 @@ pub struct MailboxService {
     ingest_tx: mpsc::Sender<CapturedEnvelope>,
     expiry_tx: mpsc::UnboundedSender<ExpiryMsg>,
     sink: Arc<dyn EventSink>,
+    /// Shared STARTTLS acceptor, built once at construction time. `None`
+    /// when TLS is disabled or the binary was built without `--features tls`.
+    tls_acceptor: Option<Arc<TlsAcceptor>>,
 }
 
 impl std::fmt::Debug for MailboxService {
@@ -54,6 +58,17 @@ impl MailboxService {
         sink: Arc<dyn EventSink>,
     ) -> Self {
         let (lo, hi) = config.ephemeral_port_range;
+        let tls_acceptor = match tls::maybe_acceptor(&config.tls) {
+            Ok(opt) => opt,
+            Err(e) => {
+                // A misconfigured TLS is a startup error in spirit, but
+                // we don't want to take the whole service down — log,
+                // surface STARTTLS as unavailable, and move on.
+                tracing::error!(target: "postcrate::tls", error = %e,
+                    "failed to load TLS acceptor; STARTTLS will not be offered");
+                None
+            }
+        };
         Self {
             pool,
             config,
@@ -63,6 +78,7 @@ impl MailboxService {
             ingest_tx,
             expiry_tx,
             sink,
+            tls_acceptor,
         }
     }
 
@@ -281,7 +297,7 @@ impl MailboxService {
         let advert = EhloAdvert {
             hostname: self.config.ehlo_hostname.clone(),
             max_size: self.config.max_message_bytes,
-            starttls_enabled: false,
+            starttls_enabled: self.tls_acceptor.is_some(),
         };
 
         // Reuse the existing bounce-evaluator handle if we have one;
@@ -305,6 +321,7 @@ impl MailboxService {
             chaos: ChaosInjector::new(chaos_cfg, port as u64),
             bounce,
             ingest_tx: self.ingest_tx.clone(),
+            tls_acceptor: self.tls_acceptor.clone(),
         };
 
         match listener::start(spec).await {

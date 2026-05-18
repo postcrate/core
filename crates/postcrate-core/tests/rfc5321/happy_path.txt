@@ -1,0 +1,26 @@
+# RFC 5321 §4 happy path: EHLO, MAIL FROM, RCPT TO, DATA, QUIT.
+S: 220
+C: EHLO client.example
+S: 250-
+S: 250-PIPELINING
+S: 250-SIZE
+S: 250-8BITMIME
+S: 250-SMTPUTF8
+S: 250-ENHANCEDSTATUSCODES
+S: 250 HELP
+C: MAIL FROM:<sender@example.com>
+S: 250
+C: RCPT TO:<rcpt@example.com>
+S: 250
+C: DATA
+S: 354
+C-DATA: From: sender@example.com
+C-DATA: To: rcpt@example.com
+C-DATA: Subject: hi
+C-DATA: Date: Mon, 1 Jan 2024 00:00:00 +0000
+C-DATA:
+C-DATA: body
+C-DATA-END
+S: 250
+C: QUIT
+S: 221

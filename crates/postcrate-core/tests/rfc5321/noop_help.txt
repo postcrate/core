@@ -1,0 +1,23 @@
+# NOOP and HELP are allowed in any state.
+# HELP returns a multi-line 214 reply (two lines today).
+S: 220
+C: NOOP
+S: 250
+C: HELP
+S: 214-
+S: 214
+C: EHLO test
+S: 250-
+S: 250-PIPELINING
+S: 250-SIZE
+S: 250-8BITMIME
+S: 250-SMTPUTF8
+S: 250-ENHANCEDSTATUSCODES
+S: 250 HELP
+C: NOOP
+S: 250
+C: HELP MAIL
+S: 214-
+S: 214
+C: QUIT
+S: 221

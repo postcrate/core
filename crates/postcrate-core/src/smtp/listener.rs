@@ -12,7 +12,8 @@ use crate::error::Result;
 use crate::smtp::bounce::BounceEvaluator;
 use crate::smtp::chaos::ChaosInjector;
 use crate::smtp::extensions::EhloAdvert;
-use crate::smtp::session::{run_session, CapturedEnvelope, SessionCtx};
+use crate::smtp::session::{run_session, CapturedEnvelope, SessionCtx, SessionOutcome};
+use crate::smtp::tls::TlsAcceptor;
 
 #[derive(Debug)]
 pub struct ListenerHandle {
@@ -33,6 +34,10 @@ pub struct ListenerSpec {
     pub chaos: ChaosInjector,
     pub bounce: Arc<parking_lot::RwLock<BounceEvaluator>>,
     pub ingest_tx: mpsc::Sender<CapturedEnvelope>,
+    /// Optional STARTTLS acceptor. When `Some`, the listener will offer
+    /// STARTTLS in EHLO and upgrade sessions that request it. When
+    /// `None`, STARTTLS is rejected with `454 TLS not available`.
+    pub tls_acceptor: Option<Arc<TlsAcceptor>>,
 }
 
 pub async fn start(spec: ListenerSpec) -> Result<ListenerHandle> {
@@ -81,12 +86,10 @@ async fn accept_loop(
                         chaos: spec.chaos.clone(),
                         bounce: spec.bounce.clone(),
                         ingest_tx: spec.ingest_tx.clone(),
+                        tls_active: false,
                     };
-                    tokio::spawn(async move {
-                        if let Err(e) = run_session(stream, ctx).await {
-                            tracing::warn!(target: "postcrate::smtp", error = %e, "session error");
-                        }
-                    });
+                    let acceptor = spec.tls_acceptor.clone();
+                    tokio::spawn(handle_connection(stream, ctx, acceptor));
                 }
                 Err(e) => {
                     tracing::warn!(target: "postcrate::smtp", error = %e, "accept failed");
@@ -95,5 +98,53 @@ async fn accept_loop(
                 }
             }
         }
+    }
+}
+
+async fn handle_connection(
+    stream: tokio::net::TcpStream,
+    ctx: SessionCtx,
+    tls_acceptor: Option<Arc<TlsAcceptor>>,
+) {
+    let outcome = match run_session(stream, ctx.clone()).await {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!(target: "postcrate::smtp", error = %e, "session error");
+            return;
+        }
+    };
+
+    let stream = match outcome {
+        SessionOutcome::Closed => return,
+        SessionOutcome::UpgradeTls(stream) => stream,
+    };
+
+    #[cfg(feature = "tls")]
+    {
+        let Some(acceptor) = tls_acceptor else {
+            // We advertised STARTTLS but lost the acceptor — abnormal.
+            tracing::warn!(target: "postcrate::smtp", "upgrade requested with no acceptor configured");
+            return;
+        };
+        let tls_stream = match acceptor.accept(stream).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(target: "postcrate::smtp", error = %e, "TLS handshake failed");
+                return;
+            }
+        };
+        let mut tls_ctx = ctx;
+        tls_ctx.tls_active = true;
+        if let Err(e) = run_session(tls_stream, tls_ctx).await {
+            tracing::warn!(target: "postcrate::smtp", error = %e, "session error (TLS)");
+        }
+    }
+
+    #[cfg(not(feature = "tls"))]
+    {
+        // When the feature is off we never advertise STARTTLS, so the
+        // session never returns UpgradeTls. The branch is here only to
+        // make types line up.
+        let _ = (stream, tls_acceptor);
     }
 }

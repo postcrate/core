@@ -1,0 +1,22 @@
+From: sender@example.com
+To: recipient@example.com
+Subject: Report attached
+Date: Mon, 1 Jan 2024 00:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="bnd"
+
+--bnd
+Content-Type: text/plain; charset=utf-8
+
+Please find the attached report.
+
+--bnd
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="report.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJaqrrK0KMSAwIG9iago8PAovUHJvZHVjZXIgKHRlc3QpCj4+CmVuZG9iagp4cmVm
+CjAgMQowMDAwMDAwMDAwIDY1NTM1IGYNCnRyYWlsZXIKPDwKL1Jvb3QgMSAwIFIKL1NpemUgMQo+
+PgpzdGFydHhyZWYKMzgKJSVFT0YK
+
+--bnd--

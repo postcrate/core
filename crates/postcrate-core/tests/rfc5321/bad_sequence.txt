@@ -1,0 +1,23 @@
+# RFC 5321 §4.3: out-of-sequence commands must return 503.
+S: 220
+C: EHLO test
+S: 250-
+S: 250-PIPELINING
+S: 250-SIZE
+S: 250-8BITMIME
+S: 250-SMTPUTF8
+S: 250-ENHANCEDSTATUSCODES
+S: 250 HELP
+# RCPT before MAIL FROM
+C: RCPT TO:<a@b>
+S: 503
+# DATA before MAIL FROM
+C: DATA
+S: 503
+C: MAIL FROM:<x@y>
+S: 250
+# DATA before RCPT
+C: DATA
+S: 503
+C: QUIT
+S: 221

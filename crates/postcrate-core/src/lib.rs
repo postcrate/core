@@ -38,7 +38,33 @@ pub(crate) mod mailbox;
 pub(crate) mod pipeline;
 pub(crate) mod smtp;
 
-pub use crate::config::CoreConfig;
+pub use crate::config::{BindHost, CoreConfig};
+
+/// Stable, panic-safe wrappers around internal parsers used by the
+/// cargo-fuzz targets under `fuzz/`. Not intended for general use;
+/// the public surface for normal callers is the [`Service`] type.
+#[doc(hidden)]
+pub mod fuzz {
+    /// Run the SMTP command-line parser. Returns `Ok` or `Err`; either
+    /// way, the parser must not panic.
+    pub fn parse_smtp_command(input: &str) -> std::result::Result<(), String> {
+        crate::smtp::command::SmtpCommand::parse(input)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Run the MIME parser. Must not panic on arbitrary input.
+    pub fn parse_mail(bytes: &[u8]) {
+        let _ = crate::mail::parse::parse(bytes);
+    }
+
+    /// Run the SMTP path parser (the inside of `MAIL FROM:<...>`).
+    pub fn parse_smtp_path(input: &str) -> std::result::Result<(), String> {
+        crate::mail::address::parse_path(input)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
 pub use crate::db::audit::AuditEntry;
 pub use crate::db::bounce_rules::BounceRule;
 pub use crate::db::chaos_configs::ChaosConfig;

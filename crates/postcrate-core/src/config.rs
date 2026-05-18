@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::smtp::tls::TlsConfig;
 
 /// Bind selection at startup. Runtime `exposeOnLan` toggles override this
 /// at restart time (the running listeners aren't moved).
@@ -47,6 +48,9 @@ pub struct CoreConfig {
     pub data_spill_bytes: usize,
     /// Bounded queue size between SMTP sessions and the ingest worker.
     pub ingest_channel_capacity: usize,
+    /// STARTTLS configuration. Disabled by default; enabling requires
+    /// the `tls` Cargo feature to be active on `postcrate-core`.
+    pub tls: TlsConfig,
 }
 
 impl CoreConfig {
@@ -68,6 +72,7 @@ impl CoreConfig {
             smtp_max_line_bytes: 1000,
             data_spill_bytes: 256 * 1024,
             ingest_channel_capacity: 1024,
+            tls: TlsConfig::default(),
         })
     }
 

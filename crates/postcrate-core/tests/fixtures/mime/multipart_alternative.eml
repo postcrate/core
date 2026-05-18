@@ -1,0 +1,18 @@
+From: alice@example.com
+To: bob@example.com
+Subject: Hello from multipart
+Date: Mon, 1 Jan 2024 00:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="boundary42"
+
+--boundary42
+Content-Type: text/plain; charset=utf-8
+
+Hello in plain text!
+
+--boundary42
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Hello in <b>HTML</b>!</p></body></html>
+
+--boundary42--

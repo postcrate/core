@@ -17,6 +17,17 @@ use crate::smtp::data_reader::{read_data, DataOutcome, DataReadCfg};
 use crate::smtp::extensions::EhloAdvert;
 use crate::smtp::response::{ReplyWriter, SmtpReply};
 
+/// What the session asks the caller to do next.
+///
+/// `Closed` is the common case (peer hung up or sent QUIT). `UpgradeTls`
+/// hands the raw stream back to the listener so it can wrap it in a
+/// rustls `TlsAcceptor::accept` call and start a fresh session on top.
+#[derive(Debug)]
+pub enum SessionOutcome<Io> {
+    Closed,
+    UpgradeTls(Io),
+}
+
 /// Sent to the ingest worker when DATA completes successfully.
 #[derive(Debug)]
 pub struct CapturedEnvelope {
@@ -30,6 +41,7 @@ pub struct CapturedEnvelope {
 }
 
 /// Per-session context — cheap to clone (mostly Arcs).
+#[derive(Clone)]
 pub struct SessionCtx {
     pub mailbox_id: String,
     pub ehlo_advert: EhloAdvert,
@@ -40,6 +52,10 @@ pub struct SessionCtx {
     pub chaos: ChaosInjector,
     pub bounce: Arc<parking_lot::RwLock<BounceEvaluator>>,
     pub ingest_tx: mpsc::Sender<CapturedEnvelope>,
+    /// True when this session is running on top of a TLS stream. When
+    /// set, STARTTLS replies `503` (already active) and the EHLO advert
+    /// drops STARTTLS so a polite client doesn't try a second upgrade.
+    pub tls_active: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +66,7 @@ enum State {
 }
 
 /// Run an accepted SMTP session to completion.
-pub async fn run_session<Io>(io: Io, ctx: SessionCtx) -> Result<()>
+pub async fn run_session<Io>(io: Io, ctx: SessionCtx) -> Result<SessionOutcome<Io>>
 where
     Io: AsyncRead + AsyncWrite + Unpin,
 {
@@ -62,7 +78,7 @@ where
     apply_delay(&ctx.chaos).await;
     if let Some(bytes) = ctx.chaos.maybe_malformed_bytes() {
         writer.send_raw(&bytes).await?;
-        return Ok(());
+        return Ok(SessionOutcome::Closed);
     }
     writer.send(&SmtpReply::greet(&ctx.ehlo_advert.hostname)).await?;
 
@@ -117,8 +133,22 @@ where
                 continue;
             }
             SmtpCommand::StartTls => {
-                writer.send(&SmtpReply::command_not_implemented()).await?;
-                continue;
+                if ctx.tls_active {
+                    writer.send(&SmtpReply::tls_already_active()).await?;
+                    continue;
+                }
+                if !ctx.ehlo_advert.starttls_enabled {
+                    writer.send(&SmtpReply::tls_not_available()).await?;
+                    continue;
+                }
+                writer.send(&SmtpReply::start_tls_ready()).await?;
+                // Recover the raw stream and hand it back to the listener.
+                // After this point the client expects the next bytes on the
+                // wire to be a ClientHello.
+                let reader_half = reader.into_inner();
+                let writer_half = writer.into_inner();
+                let stream = reader_half.unsplit(writer_half);
+                return Ok(SessionOutcome::UpgradeTls(stream));
             }
             _ => {}
         }
@@ -138,7 +168,16 @@ where
                 state = State::Greeted;
             }
             (_, SmtpCommand::Ehlo(client)) => {
-                writer.send(&ctx.ehlo_advert.reply(&client)).await?;
+                // Suppress the STARTTLS advert once we're already inside
+                // a TLS session — RFC 3207 §4 wants us to omit it.
+                let advert = if ctx.tls_active {
+                    let mut a = ctx.ehlo_advert.clone();
+                    a.starttls_enabled = false;
+                    a
+                } else {
+                    ctx.ehlo_advert.clone()
+                };
+                writer.send(&advert.reply(&client)).await?;
                 state = State::Greeted;
             }
             (State::Greeted, SmtpCommand::MailFrom(path)) => {
@@ -187,7 +226,7 @@ where
                     DataOutcome::Complete(raw) => {
                         // Chaos: maybe drop the connection right before our 250.
                         if ctx.chaos.should_drop_during_data() {
-                            return Ok(());
+                            return Ok(SessionOutcome::Closed);
                         }
 
                         let envelope = CapturedEnvelope {
@@ -219,9 +258,9 @@ where
                     DataOutcome::SizeExceeded => {
                         writer.send(&SmtpReply::size_exceeded()).await?;
                         // Drop the session — we don't know how to recover.
-                        return Ok(());
+                        return Ok(SessionOutcome::Closed);
                     }
-                    DataOutcome::Eof => return Ok(()),
+                    DataOutcome::Eof => return Ok(SessionOutcome::Closed),
                 }
             }
             (_, SmtpCommand::MailFrom(_)) => {
@@ -245,7 +284,7 @@ where
         }
     }
 
-    Ok(())
+    Ok(SessionOutcome::Closed)
 }
 
 async fn apply_delay(chaos: &ChaosInjector) {

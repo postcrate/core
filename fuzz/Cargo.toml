@@ -1,0 +1,45 @@
+[package]
+name = "postcrate-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# This crate is *not* a workspace member — cargo-fuzz manages it
+# separately and builds with a nightly toolchain. From the workspace
+# root:
+#
+#   cargo install cargo-fuzz
+#   cargo fuzz run smtp_command --max_total_time=300
+#   cargo fuzz run mail_parse   --max_total_time=300
+#   cargo fuzz run smtp_path    --max_total_time=300
+
+[dependencies]
+libfuzzer-sys = "0.4"
+postcrate-core = { path = "../crates/postcrate-core" }
+
+[[bin]]
+name = "smtp_command"
+path = "fuzz_targets/smtp_command.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mail_parse"
+path = "fuzz_targets/mail_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "smtp_path"
+path = "fuzz_targets/smtp_path.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

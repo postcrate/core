@@ -33,6 +33,29 @@ Versioned at `/api/v1`. Loopback by default; `0.0.0.0` only if `settings.network
 | POST | `/api/v1/messages/search` | `{ q, mailboxId?, limit? }` | `[EmailSummary]` |
 | POST | `/api/v1/messages/:id/read` | `{ read: bool }` | `{ read: bool }` |
 
+Search uses SQLite FTS5 with the `unicode61` tokenizer (`remove_diacritics 2`). Whitespace-separated tokens combine with implicit AND. Each token is treated as a prefix term, so `"alic"` matches "alice". Hyphens are dropped from the query (they're an FTS5 operator). Searchable columns: `subject`, `sender`, `recipients`, `body`.
+
+## Audit
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/v1/audit?limit=&offset=` | — | `[AuditEntry]` |
+| DELETE | `/api/v1/audit?olderThanDays=` | — | `{ deleted: <count> }` |
+
+`AuditEntry`:
+```json
+{
+  "id": 42,
+  "at": 1716071234567,
+  "actor": "user",
+  "action": "mailbox.create",
+  "targetKind": "mailbox",
+  "targetId": "...",
+  "metadata": { "...": "..." }
+}
+```
+`DELETE /audit` without `olderThanDays` clears the entire log. With `olderThanDays=30`, prunes entries older than 30 days.
+
 ## Chaos
 
 | Method | Path | Body | Returns |

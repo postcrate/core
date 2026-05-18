@@ -5,6 +5,10 @@ members = [
     "crates/postcrate-server",
     "crates/postcrate-ci",
 ]
+# `fuzz/` is a separate cargo-fuzz crate, built with a nightly
+# toolchain via `cargo fuzz run …`. Keep it out of the main workspace
+# so normal `cargo build --workspace` doesn't try to pull it in.
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"
@@ -68,9 +72,10 @@ rand_chacha = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Deferred (architected for, but not enabled until the TLS phase):
-# tokio-rustls = "0.26"
-# rustls-pemfile = "2"
+# TLS support — enabled per-crate via an optional dependency under the
+# `tls` feature flag. Default builds do not pull these in.
+tokio-rustls = { version = "0.26", default-features = false, features = ["tls12", "ring"] }
+rustls-pemfile = "2"
 
 [profile.release]
 opt-level = 3

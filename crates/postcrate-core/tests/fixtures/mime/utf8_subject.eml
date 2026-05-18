@@ -1,0 +1,8 @@
+From: alice@example.com
+To: bob@example.com
+Subject: UTF-8 direct: café, 日本語, 🚀
+Date: Mon, 1 Jan 2024 00:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Body in raw UTF-8 (no transfer encoding). Requires SMTPUTF8 + 8BITMIME.

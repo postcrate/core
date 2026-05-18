@@ -1,0 +1,29 @@
+# RFC 5321 §4.5.2: a line starting with `.` inside DATA is dot-stuffed
+# by the client (`..`); the server must strip one. A bare `.\r\n`
+# terminates the message.
+S: 220
+C: EHLO test
+S: 250-
+S: 250-PIPELINING
+S: 250-SIZE
+S: 250-8BITMIME
+S: 250-SMTPUTF8
+S: 250-ENHANCEDSTATUSCODES
+S: 250 HELP
+C: MAIL FROM:<a@b>
+S: 250
+C: RCPT TO:<c@d>
+S: 250
+C: DATA
+S: 354
+C-DATA: Subject: dots
+C-DATA: From: a@b
+C-DATA: To: c@d
+C-DATA: Date: Mon, 1 Jan 2024 00:00:00 +0000
+C-DATA:
+C-DATA: ..literal-dot
+C-DATA: regular line
+C-DATA-END
+S: 250
+C: QUIT
+S: 221

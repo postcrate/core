@@ -1,0 +1,10 @@
+# HELO (legacy SMTP) instead of EHLO — RFC 5321 §3.1.
+S: 220
+C: HELO client.example
+S: 250
+C: MAIL FROM:<a@b.com>
+S: 250
+C: RCPT TO:<c@d.com>
+S: 250
+C: QUIT
+S: 221

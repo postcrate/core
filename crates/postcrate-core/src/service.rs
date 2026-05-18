@@ -153,6 +153,16 @@ impl Service {
         }
     }
 
+    /// The HTTP API's bound socket address, if the server is running.
+    pub fn http_addr(&self) -> Option<std::net::SocketAddr> {
+        self.inner.http_handle.lock().as_ref().map(|h| h.addr)
+    }
+
+    /// The bound SMTP socket address for a given mailbox listener.
+    pub fn mailbox_addr(&self, mailbox_id: &str) -> Option<std::net::SocketAddr> {
+        self.inner.mailboxes.listener_addr(mailbox_id)
+    }
+
     fn emit_status(&self) {
         self.inner
             .sink

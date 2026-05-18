@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod bounces;
 pub mod chaos;
 pub mod emails;
@@ -20,4 +21,5 @@ fn api_v1() -> Router<ServiceHandle> {
         .merge(emails::router())
         .merge(chaos::router())
         .merge(bounces::router())
+        .merge(audit::router())
 }

@@ -37,7 +37,13 @@ pub async fn start(handle: ServiceHandle) -> Result<HttpServerHandle> {
         .clone();
     let _ = net;
     let settings = crate::db::settings::load_all(&handle.inner.pool).await?;
-    let port = if settings.network.http_api_port != 0 {
+    // Precedence: an explicit `cfg.http_port = 0` means "let the OS
+    // pick", and overrides settings (this is what integration tests
+    // use). Otherwise the persisted setting wins so the user can
+    // change ports at runtime; cfg is the boot-time default.
+    let port = if cfg.http_port == 0 {
+        0
+    } else if settings.network.http_api_port != 0 {
         settings.network.http_api_port
     } else {
         cfg.http_port

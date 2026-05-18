@@ -16,8 +16,9 @@ path = "src/lib.rs"
 
 [features]
 default = []
-# Reserved for the future TLS phase. Today this is a no-op flag.
-tls = []
+# Enables STARTTLS in the SMTP session loop. When off, STARTTLS is
+# never advertised in EHLO and the command replies 502.
+tls = ["dep:tokio-rustls", "dep:rustls-pemfile"]
 
 [dependencies]
 tokio = { workspace = true }
@@ -51,6 +52,12 @@ rand_chacha = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+tokio-rustls = { workspace = true, optional = true }
+rustls-pemfile = { workspace = true, optional = true }
+
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
+tokio = { workspace = true, features = ["test-util", "process"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tempfile = "3"
 

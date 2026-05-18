@@ -1,0 +1,16 @@
+# Quoted local part inside angle brackets, per RFC 5321 §4.1.2.
+S: 220
+C: EHLO test
+S: 250-
+S: 250-PIPELINING
+S: 250-SIZE
+S: 250-8BITMIME
+S: 250-SMTPUTF8
+S: 250-ENHANCEDSTATUSCODES
+S: 250 HELP
+C: MAIL FROM:<"strange@local"@host.example>
+S: 250
+C: RCPT TO:<"odd name"@host.example>
+S: 250
+C: QUIT
+S: 221
