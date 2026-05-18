@@ -119,6 +119,6 @@ let results = service.search_emails("verify", Some(&mailbox_id), 50).await?;
 
 The library does not embed an MCP server, a CLI, or a UI. For those:
 
-- `postcrate-server` — Mailpit-style headless binary.
+- `postcrate-server` — headless daemon binary.
 - `postcrate-ci` — fast-start CI variant.
 - The (downstream) Tauri repo — desktop UI that consumes this crate via path dependency.

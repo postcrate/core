@@ -1,4 +1,4 @@
-//! `postcrate` — Mailpit-style headless daemon.
+//! `postcrate` — headless SMTP capture daemon.
 //!
 //! Usage:
 //!     postcrate run --smtp 1025 --http 1080 --data-dir /tmp/pc
@@ -14,7 +14,7 @@ use postcrate_core::{CoreConfig, LogSink, MailboxKind, Service, SettingsPatch};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "postcrate", version, about = "Mailpit-grade SMTP capture daemon")]
+#[command(name = "postcrate", version, about = "SMTP capture daemon with a local HTTP API")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

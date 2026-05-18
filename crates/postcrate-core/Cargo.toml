@@ -8,7 +8,7 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
-description = "Mailpit-grade SMTP capture engine: server, multi-mailbox lifecycle, chaos simulation, SQLite persistence, HTTP API."
+description = "Embeddable SMTP capture engine: server, multi-mailbox lifecycle, chaos simulation, SQLite persistence, HTTP API."
 
 [lib]
 name = "postcrate_core"

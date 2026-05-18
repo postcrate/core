@@ -323,9 +323,9 @@ impl MailboxService {
             // by the time the client speaks SMTP.
             starttls_enabled: self.tls_acceptor.is_some() && !implicit_tls,
             // AUTH is advertised by default for client compatibility.
-            // Mailpit does the same — local capture servers don't need
-            // to authenticate but many sender libraries refuse to send
-            // unless AUTH is offered.
+            // Local capture servers don't actually need authentication,
+            // but many sender libraries refuse to submit unless AUTH is
+            // offered, so we advertise it and accept any credentials.
             auth_enabled: true,
         };
 

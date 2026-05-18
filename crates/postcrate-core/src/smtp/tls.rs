@@ -6,8 +6,8 @@
 //!
 //! Behind the `tls` feature flag. Without the feature: `STARTTLS` is
 //! never advertised in EHLO, the session replies `454 TLS not
-//! available` if a client asks anyway, and this module compiles down
-//! to a thin stub.
+//! available` if a client asks anyway, and the rustls dependency drops
+//! out of the build entirely.
 
 use std::path::PathBuf;
 use std::sync::Arc;

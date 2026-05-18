@@ -1,6 +1,6 @@
-//! EHLO advertisement builder. The supported extensions are static for
-//! now, but max-size and the optional `STARTTLS` keyword are wired
-//! through here so we can flip them per config.
+//! EHLO advertisement builder. The supported extensions are fixed, but
+//! max-size and the optional `STARTTLS` / `AUTH` keywords flip per
+//! config so a single builder covers every mailbox flavour.
 
 use std::borrow::Cow;
 
@@ -11,9 +11,9 @@ pub struct EhloAdvert {
     pub hostname: String,
     pub max_size: u64,
     pub starttls_enabled: bool,
-    /// When true, advertise `AUTH PLAIN LOGIN`. We accept any
-    /// credentials (Mailpit-style) — AUTH is for client compatibility,
-    /// not for security in a local capture server.
+    /// When true, advertise `AUTH PLAIN LOGIN`. The session accepts
+    /// any credentials — AUTH is advertised for client compatibility,
+    /// not for access control in a local capture server.
     pub auth_enabled: bool,
 }
 

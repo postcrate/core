@@ -1,6 +1,5 @@
 //! Minimal RFC 5321 path parser. We accept what real SMTP clients send,
-//! not what the grammar says they should — Mailpit and Postfix are the
-//! reference baseline.
+//! not just what the grammar says they should.
 //!
 //! Examples we have to handle:
 //!   - `<a@b.com>`

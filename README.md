@@ -2,12 +2,14 @@
 
 The mail engine that powers [Postcrate](https://postcrate.dev). A standalone, Tokio-native SMTP capture server with a local HTTP API, multi-mailbox lifecycle, chaos simulation, and SQLite persistence. Ships as a library, a headless binary, and a CI variant — no UI dependency.
 
+Built for developers who want a fast, scriptable inbox for local development, integration tests, and CI: SMTP in, queryable mail out, with a clean Rust API in between.
+
 ## Crates
 
 | Crate | Purpose |
 |-------|---------|
 | `postcrate-core`   | Library. `Service` façade exposing every operation. |
-| `postcrate-server` | Mailpit-style headless daemon (`postcrate run ...`). |
+| `postcrate-server` | Headless daemon (`postcrate run ...`). |
 | `postcrate-ci`     | Fast-start CI variant; prints env line on ready. |
 
 ## Quick start (headless server)

@@ -60,7 +60,7 @@ impl ChaosInjector {
         }
         let mut rng = self.rng.lock();
         if rng.gen::<f32>() < self.cfg.reject_5xx_prob {
-            return Some(SmtpReply::custom(550, "Chaos: temporarily rejected"));
+            return Some(SmtpReply::custom(550, "Chaos: rejected"));
         }
         if rng.gen::<f32>() < self.cfg.reject_4xx_prob {
             return Some(SmtpReply::custom(451, "Chaos: try again later"));

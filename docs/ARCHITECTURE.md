@@ -52,13 +52,20 @@
 - All events go through the `EventSink` trait (`events.rs`). The crate ships three sinks: `LogSink` (tracing), `ChannelSink` (broadcast for tests/CLI), and `ComposedSink` (fan-out).
 - A Tauri shell implements `EventSink` for an `AppHandle` and wires `#[tauri::command]` shims over `Service` methods. That glue is in the downstream Tauri repo, not here.
 
-## TLS path (deferred)
+## TLS path
 
-`smtp/tls.rs` is a stub. When TLS is enabled:
+`smtp/tls.rs` is gated on the `tls` feature (off by default). When the
+feature is on:
 
-1. Add `tokio-rustls` + `rustls-pemfile` behind the `tls` feature in `Cargo.toml`.
-2. Implement `upgrade_to_tls(stream, cert, key)` here.
-3. Flip `EhloAdvert.starttls_enabled = true`.
-4. Add a STARTTLS handler in `session.rs` that calls `upgrade_to_tls` before the next EHLO round.
+- `tokio-rustls` + `rustls-pemfile` are pulled in via the workspace.
+- `EhloAdvert.starttls_enabled` flips on per-listener when an acceptor
+  is configured.
+- A STARTTLS handler in `session.rs` returns
+  `SessionOutcome::UpgradeTls(io)`; the listener re-runs the session on
+  the wrapped TLS stream.
+- Implicit-TLS listeners (RFC 8314) wrap the socket before the banner
+  and suppress the STARTTLS advert.
 
-The session loop being generic over `Io` means no other module changes.
+The session loop is generic over `Io: AsyncRead + AsyncWrite + Unpin`,
+so the upgrade lives entirely in the listener layer — no other module
+changes for the cleartext → TLS transition.
