@@ -42,6 +42,7 @@ async fn release_routes_to_relay_mailbox() {
         host: relay_inbox.host.clone(),
         port: relay_inbox.port,
         timeout_seconds: Some(5),
+        allowed_recipients: None,
     };
     ts.service
         .release_email(&id, "downstream@real.example", &relay)
@@ -63,4 +64,41 @@ async fn release_routes_to_relay_mailbox() {
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn allowlist_blocks_unlisted_recipient() {
+    use common::quick_send as send_helper;
+    let ts = TestService::boot().await;
+    let captured = ts.create_ephemeral(60).await;
+    let relay_mb = ts.create_ephemeral(60).await;
+
+    send_helper(&captured.host, captured.port, "a@b", "c@d", "x", "body").await.unwrap();
+    let id = loop {
+        let s = ts.service.list_emails(&captured.id, 10, 0).await.unwrap();
+        if let Some(s0) = s.first() { break s0.id.clone(); }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+
+    let relay = RelayConfig {
+        host: relay_mb.host.clone(),
+        port: relay_mb.port,
+        timeout_seconds: Some(5),
+        allowed_recipients: Some(vec!["*@test.local".into(), "alice@example.com".into()]),
+    };
+    // "evil@prod.example" is not in the allowlist.
+    let err = ts
+        .service
+        .release_email(&id, "evil@prod.example", &relay)
+        .await
+        .err()
+        .expect("should have rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("allowlist"), "got {msg}");
+
+    // "alice@example.com" passes.
+    ts.service
+        .release_email(&id, "alice@example.com", &relay)
+        .await
+        .expect("allowed recipient");
 }

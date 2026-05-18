@@ -21,7 +21,7 @@ use crate::db::{emails as db_emails, settings as db_settings};
 use crate::error::Result;
 use crate::events::{CoreEvent, EventSink};
 use crate::mail::parse::{self as parse_mail, ParsedAttachment};
-use crate::pipeline::retention;
+use crate::pipeline::{retention, webhooks};
 use crate::tagging;
 use crate::smtp::data_reader::{finalize_to_blob, load_bytes};
 use crate::smtp::session::CapturedEnvelope;
@@ -86,8 +86,11 @@ async fn ingest_one(
 
     let parsed_json = parsed_to_json(&parsed);
     let fts_body = parse_mail::fts_body(&parsed);
-    let tag = tagging::classify(&parsed);
-    let tag_str = Some(tag.as_str().to_string());
+    // Plus-addressing (`user+something@host`) wins over the heuristic
+    // classifier: an explicit `+tag` is the user telling us where to
+    // file the email. Fall back to classification when absent.
+    let tag_str = tagging::extract_plus_tag(&env.rcpt_to)
+        .or_else(|| Some(tagging::classify(&parsed).as_str().to_string()));
 
     let insert = EmailInsert {
         mailbox_id: env.mailbox_id.clone(),
@@ -127,9 +130,21 @@ async fn ingest_one(
         ..outcome.summary
     };
     sink.emit(CoreEvent::NewEmail {
-        mailbox_id: env.mailbox_id,
-        email: summary,
+        mailbox_id: env.mailbox_id.clone(),
+        email: summary.clone(),
     });
+
+    // Fire-and-forget webhook dispatch + auto-forwarding. Both are
+    // best-effort and explicitly do not propagate errors back into
+    // the ingest path.
+    webhooks::dispatch(pool.clone(), env.mailbox_id.clone(), summary.clone()).await;
+    crate::pipeline::forwarding::dispatch(
+        pool.clone(),
+        env.mailbox_id.clone(),
+        outcome.id,
+        raw_path_str,
+    )
+    .await;
 
     Ok(())
 }

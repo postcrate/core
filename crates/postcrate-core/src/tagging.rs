@@ -52,6 +52,36 @@ impl EmailTag {
     }
 }
 
+/// Extract a plus-address tag (RFC 5233 §3.1) from the first
+/// recipient that uses one. `alice+invoices@example.com` → "invoices".
+///
+/// We use this at ingest time as a higher-priority signal than the
+/// heuristic classifier: a user typing `+invoices` is explicitly
+/// asking for that bucket, regardless of what the message looks
+/// like. Returns `None` when no recipient uses the form.
+pub fn extract_plus_tag(rcpts: &[String]) -> Option<String> {
+    for rcpt in rcpts {
+        let Some(at) = rcpt.find('@') else { continue };
+        let local = &rcpt[..at];
+        let Some(plus) = local.find('+') else { continue };
+        let tag = &local[plus + 1..];
+        if tag.is_empty() {
+            continue;
+        }
+        // Sanitize: tag column should be small + safe. Limit length
+        // and strip everything that isn't a typical tag character.
+        let cleaned: String = tag
+            .chars()
+            .filter(|c| c.is_alphanumeric() || matches!(*c, '-' | '_' | '.'))
+            .take(64)
+            .collect();
+        if !cleaned.is_empty() {
+            return Some(cleaned);
+        }
+    }
+    None
+}
+
 /// Classify a parsed email. The returned tag is the highest-scoring
 /// category, or `Unknown` when no signal crossed the threshold.
 pub fn classify(parsed: &Parsed) -> EmailTag {
@@ -284,6 +314,32 @@ mod tests {
     fn unknown_when_no_signal() {
         let p = parsed("hi", "see you tomorrow", "alice@friend.example", json!({}));
         assert_eq!(classify(&p), EmailTag::Unknown);
+    }
+
+    #[test]
+    fn plus_tag_extraction() {
+        assert_eq!(
+            extract_plus_tag(&["alice+invoices@example.com".into()]),
+            Some("invoices".into())
+        );
+        assert_eq!(
+            extract_plus_tag(&["alice@example.com".into(), "bob+ci-run@example.com".into()]),
+            Some("ci-run".into())
+        );
+        assert_eq!(
+            extract_plus_tag(&["alice@example.com".into()]),
+            None
+        );
+        // Empty tag after `+` returns None.
+        assert_eq!(
+            extract_plus_tag(&["alice+@example.com".into()]),
+            None
+        );
+        // Disallowed characters are stripped.
+        assert_eq!(
+            extract_plus_tag(&["alice+!!hello!!@example.com".into()]),
+            Some("hello".into())
+        );
     }
 
     #[test]

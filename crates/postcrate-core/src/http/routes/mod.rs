@@ -10,6 +10,7 @@ pub mod recording;
 pub mod rendering;
 pub mod scenarios;
 pub mod wait;
+pub mod webhooks;
 
 use axum::Router;
 
@@ -34,4 +35,5 @@ fn api_v1() -> Router<ServiceHandle> {
         .merge(recording::router())
         .merge(rendering::router())
         .merge(scenarios::router())
+        .merge(webhooks::router())
 }

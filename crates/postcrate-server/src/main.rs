@@ -185,6 +185,7 @@ async fn ensure_default_mailbox(svc: &Service, smtp_port: u16) -> Result<()> {
             kind: MailboxKind::Primary,
             port: Some(smtp_port),
             ttl_seconds: None,
+            implicit_tls: false,
         })
         .await
     {

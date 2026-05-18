@@ -29,6 +29,13 @@ pub struct RelayConfig {
     /// Connect+IO timeout (defaults to 30s).
     #[serde(default)]
     pub timeout_seconds: Option<u32>,
+    /// Glob-pattern allowlist of recipient addresses the relay is
+    /// allowed to deliver to. `["alice@example.com", "*@test.local"]`.
+    /// `None` or empty means "any recipient" (no restriction). Used
+    /// by `Service::release_email` to prevent accidentally pointing
+    /// the relay at production recipients.
+    #[serde(default)]
+    pub allowed_recipients: Option<Vec<String>>,
 }
 
 impl RelayConfig {
@@ -39,6 +46,11 @@ impl RelayConfig {
 
 /// Forward `raw` to `relay` with the given envelope. The raw bytes
 /// are sent unchanged (only dot-stuffed for transport).
+///
+/// Recipients are filtered against `relay.allowed_recipients` (glob
+/// matching) before any network call. Any recipient that fails the
+/// allowlist makes the whole release fail — we'd rather error than
+/// silently drop a recipient.
 pub async fn relay_message(
     relay: &RelayConfig,
     mail_from: &str,
@@ -47,6 +59,15 @@ pub async fn relay_message(
 ) -> Result<()> {
     if rcpt_to.is_empty() {
         return Err(Error::Invalid("release requires at least one recipient".into()));
+    }
+    if let Some(allow) = relay.allowed_recipients.as_ref().filter(|v| !v.is_empty()) {
+        for rcpt in rcpt_to {
+            if !allow.iter().any(|pat| glob_match(pat, rcpt)) {
+                return Err(Error::Invalid(format!(
+                    "recipient {rcpt:?} not in relay allowlist"
+                )));
+            }
+        }
     }
     let to = (relay.host.as_str(), relay.port);
     let stream = tokio::time::timeout(relay.timeout(), TcpStream::connect(to))
@@ -121,6 +142,48 @@ async fn drain_multi<R: tokio::io::AsyncRead + Unpin>(
         // Final line of a multi-line reply has a space at index 3.
         if line.len() >= 4 && line.as_bytes()[3] == b' ' {
             return Ok(());
+        }
+    }
+}
+
+/// Match `address` against a glob pattern. Same semantics as the
+/// bounce-rule matcher: `*` is the only wildcard, comparison is
+/// case-insensitive.
+fn glob_match(pattern: &str, address: &str) -> bool {
+    let p = pattern.to_lowercase();
+    let a = address.to_lowercase();
+    glob_inner(&p, &a)
+}
+
+fn glob_inner(p: &str, a: &str) -> bool {
+    let mut pi = p.chars().peekable();
+    let mut ai = a.chars().peekable();
+    loop {
+        match (pi.peek().copied(), ai.peek().copied()) {
+            (None, None) => return true,
+            (None, Some(_)) => return false,
+            (Some('*'), _) => {
+                pi.next();
+                if pi.peek().is_none() {
+                    return true;
+                }
+                let rest_p: String = pi.clone().collect();
+                let mut rest_a: String = ai.clone().collect();
+                loop {
+                    if glob_inner(&rest_p, &rest_a) {
+                        return true;
+                    }
+                    if rest_a.is_empty() {
+                        return false;
+                    }
+                    rest_a.remove(0);
+                }
+            }
+            (Some(pc), Some(ac)) if pc == ac => {
+                pi.next();
+                ai.next();
+            }
+            _ => return false,
         }
     }
 }

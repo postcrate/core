@@ -74,9 +74,11 @@ pub use crate::db::audit::AuditEntry;
 pub use crate::db::bounce_rules::BounceRule;
 pub use crate::db::chaos_configs::ChaosConfig;
 pub use crate::db::emails::{AttachmentMeta, EmailDetail, EmailSummary};
+pub use crate::db::forwarding::{CreateForwardingRule, ForwardingRule};
 pub use crate::db::mailboxes::{
     CreateEphemeralInput, CreateMailboxInput, EphemeralHandle, Mailbox, UpdateMailboxInput,
 };
+pub use crate::db::webhooks::{CreateWebhook, Webhook};
 pub use crate::db::settings::{
     AdvancedPrefs, AgentPrefs, BackendSettings, InboxPrefs, NetworkPrefs, SettingsPatch,
     SettingsSection,

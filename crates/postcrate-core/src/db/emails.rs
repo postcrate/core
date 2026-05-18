@@ -593,6 +593,18 @@ pub(crate) async fn set_note(pool: &SqlitePool, id: &str, note: Option<&str>) ->
     Ok(())
 }
 
+pub(crate) async fn set_tag(pool: &SqlitePool, id: &str, tag: Option<&str>) -> Result<()> {
+    let res = sqlx::query("UPDATE emails SET tag = ? WHERE id = ?")
+        .bind(tag)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(Error::EmailNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
 /// Drop anything that could be interpreted as FTS5 query syntax. We
 /// keep `.` `@` `_` because they appear in addresses and identifiers;
 /// the tokenizer treats them as separators anyway. We deliberately

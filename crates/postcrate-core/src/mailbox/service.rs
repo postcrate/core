@@ -145,6 +145,7 @@ impl MailboxService {
         kind: MailboxKind,
         port: Option<u16>,
         ttl_seconds: Option<u64>,
+        implicit_tls: bool,
     ) -> Result<db_mb::Mailbox> {
         let port = match (port, kind) {
             (Some(p), _) => p,
@@ -156,7 +157,16 @@ impl MailboxService {
             }
         };
 
-        let row = db_mb::insert(&self.pool, project_id, name, port, kind, ttl_seconds).await?;
+        let row = db_mb::insert(
+            &self.pool,
+            project_id,
+            name,
+            port,
+            kind,
+            ttl_seconds,
+            implicit_tls,
+        )
+        .await?;
         if matches!(kind, MailboxKind::Ephemeral) {
             if let Some(exp) = row.expires_at {
                 let _ = self.expiry_tx.send(ExpiryMsg::Add {
@@ -299,12 +309,19 @@ impl MailboxService {
     async fn start_listener_for(&self, id: &str, port: u16) -> Result<()> {
         let chaos_cfg = chaos_configs::get(&self.pool, id).await?;
         let bounce_rules_list = bounce_rules::list_enabled(&self.pool, id).await?;
+        let row = db_mb::get(&self.pool, id).await?;
+        // Implicit TLS requires a live acceptor — fall back to plaintext
+        // otherwise rather than refusing to boot a mailbox.
+        let implicit_tls = row.implicit_tls && self.tls_acceptor.is_some();
 
         let bind = SocketAddr::new(self.config.bind_host.as_ip(), port);
         let advert = EhloAdvert {
             hostname: self.config.ehlo_hostname.clone(),
             max_size: self.config.max_message_bytes,
-            starttls_enabled: self.tls_acceptor.is_some(),
+            // STARTTLS is only meaningful on a plaintext listener; an
+            // implicit-TLS listener already has an encrypted session
+            // by the time the client speaks SMTP.
+            starttls_enabled: self.tls_acceptor.is_some() && !implicit_tls,
             // AUTH is advertised by default for client compatibility.
             // Mailpit does the same — local capture servers don't need
             // to authenticate but many sender libraries refuse to send
@@ -334,6 +351,7 @@ impl MailboxService {
             bounce,
             ingest_tx: self.ingest_tx.clone(),
             tls_acceptor: self.tls_acceptor.clone(),
+            implicit_tls,
         };
 
         match listener::start(spec).await {

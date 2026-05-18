@@ -238,6 +238,7 @@ impl Service {
                 input.kind,
                 input.port,
                 input.ttl_seconds,
+                input.implicit_tls,
             )
             .await?;
         self.audit("user", "mailbox.create", Some("mailbox"), Some(&mb.id), None)
@@ -277,6 +278,7 @@ impl Service {
                 MailboxKind::Ephemeral,
                 None,
                 Some(input.ttl_seconds),
+                false,
             )
             .await?;
         let addr = self.inner.mailboxes.listener_addr(&mb.id);
@@ -396,6 +398,15 @@ impl Service {
     pub async fn set_note(&self, id: &str, note: Option<&str>) -> Result<()> {
         db_emails::set_note(&self.inner.pool, id, note).await?;
         self.audit("user", "email.note", Some("email"), Some(id), None).await;
+        Ok(())
+    }
+
+    /// Set or clear the tag on an email. Plus-addressing
+    /// (`user+tag@host`) sets this automatically at ingest; this
+    /// method lets users override or clear it manually.
+    pub async fn set_tag(&self, id: &str, tag: Option<&str>) -> Result<()> {
+        db_emails::set_tag(&self.inner.pool, id, tag).await?;
+        self.audit("user", "email.tag", Some("email"), Some(id), None).await;
         Ok(())
     }
 
@@ -554,6 +565,16 @@ impl Service {
     ) -> Result<crate::scenarios::auth::AuthReport> {
         let parsed = self.parsed_email(id).await?;
         Ok(crate::scenarios::auth::analyze(&parsed))
+    }
+
+    /// Validate the `List-Unsubscribe` / `List-Unsubscribe-Post`
+    /// headers per RFC 2369 + RFC 8058.
+    pub async fn analyze_list_unsub(
+        &self,
+        id: &str,
+    ) -> Result<crate::scenarios::list_unsub::UnsubReport> {
+        let parsed = self.parsed_email(id).await?;
+        Ok(crate::scenarios::list_unsub::analyze(&parsed))
     }
 
     /// Helper: re-parse a captured email's raw bytes from disk.
@@ -715,6 +736,7 @@ impl Service {
                 host: addr.ip().to_string(),
                 port: addr.port(),
                 timeout_seconds: Some(10),
+                allowed_recipients: None,
             },
             &from,
             &rcpts,
@@ -859,6 +881,71 @@ impl Service {
             seen.push(s);
         }
         Ok(ScanResult { matched: None, seen })
+    }
+
+    // ---- Webhooks ----
+
+    pub async fn list_webhooks(&self) -> Result<Vec<crate::db::webhooks::Webhook>> {
+        crate::db::webhooks::list(&self.inner.pool).await
+    }
+
+    pub async fn create_webhook(
+        &self,
+        input: crate::db::webhooks::CreateWebhook,
+    ) -> Result<crate::db::webhooks::Webhook> {
+        let hook = crate::db::webhooks::insert(&self.inner.pool, input).await?;
+        self.audit(
+            "user",
+            "webhook.create",
+            Some("webhook"),
+            Some(&hook.id),
+            None,
+        )
+        .await;
+        Ok(hook)
+    }
+
+    pub async fn delete_webhook(&self, id: &str) -> Result<()> {
+        crate::db::webhooks::delete(&self.inner.pool, id).await?;
+        self.audit("user", "webhook.delete", Some("webhook"), Some(id), None).await;
+        Ok(())
+    }
+
+    // ---- Forwarding ----
+
+    pub async fn list_forwarding_rules(
+        &self,
+    ) -> Result<Vec<crate::db::forwarding::ForwardingRule>> {
+        crate::db::forwarding::list(&self.inner.pool).await
+    }
+
+    pub async fn create_forwarding_rule(
+        &self,
+        input: crate::db::forwarding::CreateForwardingRule,
+    ) -> Result<crate::db::forwarding::ForwardingRule> {
+        let rule = crate::db::forwarding::insert(&self.inner.pool, input).await?;
+        self.audit(
+            "user",
+            "forwarding.create",
+            Some("forwarding_rule"),
+            Some(&rule.id),
+            None,
+        )
+        .await;
+        Ok(rule)
+    }
+
+    pub async fn delete_forwarding_rule(&self, id: &str) -> Result<()> {
+        crate::db::forwarding::delete(&self.inner.pool, id).await?;
+        self.audit(
+            "user",
+            "forwarding.delete",
+            Some("forwarding_rule"),
+            Some(id),
+            None,
+        )
+        .await;
+        Ok(())
     }
 
     // ---- Audit ----

@@ -30,6 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             kind: MailboxKind::Primary,
             port: Some(11099),
             ttl_seconds: None,
+            implicit_tls: false,
         })
         .await;
 

@@ -40,8 +40,9 @@ futures-util = "0.3"
 async-trait = "0.1"
 
 axum = { version = "0.8", features = ["macros", "json", "tokio", "http1"] }
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "cors", "limit", "timeout"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "limit", "timeout", "auth"] }
 http = "1"
 
 sqlx = { version = "0.8", default-features = false, features = [
@@ -74,6 +75,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
 base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 
 # TLS support — enabled per-crate via an optional dependency under the
 # `tls` feature flag. Default builds do not pull these in.

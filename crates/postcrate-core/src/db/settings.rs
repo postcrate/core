@@ -37,6 +37,15 @@ pub struct NetworkPrefs {
     pub mcp_enabled: bool,
     pub mcp_port: u16,
     pub expose_on_lan: bool,
+    /// Serve the HTTP API over HTTPS, reusing the cert/key configured
+    /// for STARTTLS. Requires `--features tls` and a valid cert.
+    #[serde(default)]
+    pub api_tls: bool,
+    /// When set, every `/api/v1/...` request must carry
+    /// `Authorization: Bearer <token>`. The healthz endpoint is
+    /// always open so liveness probes still work.
+    #[serde(default)]
+    pub api_auth_token: Option<String>,
 }
 
 impl Default for NetworkPrefs {
@@ -47,6 +56,8 @@ impl Default for NetworkPrefs {
             mcp_enabled: true,
             mcp_port: 1081,
             expose_on_lan: false,
+            api_tls: false,
+            api_auth_token: None,
         }
     }
 }

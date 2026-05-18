@@ -123,6 +123,73 @@ where
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn implicit_tls_listener_wraps_immediately() {
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_rustls::TlsConnector;
+
+    let dir = TempDir::new().unwrap();
+    let (cert_path, key_path) = write_self_signed(&dir);
+
+    let ts = TestService::boot_with(|cfg| {
+        cfg.tls.enabled = true;
+        cfg.tls.cert_path = Some(cert_path);
+        cfg.tls.key_path = Some(key_path);
+    })
+    .await;
+
+    // Pick a free port and create a mailbox with implicit_tls = true.
+    let port = {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let p = l.local_addr().unwrap().port();
+        drop(l);
+        p
+    };
+    let mb = ts
+        .service
+        .create_mailbox(postcrate_core::CreateMailboxInput {
+            project_id: "test".into(),
+            name: format!("implicit-tls-{port}"),
+            kind: postcrate_core::MailboxKind::Primary,
+            port: Some(port),
+            ttl_seconds: None,
+            implicit_tls: true,
+        })
+        .await
+        .expect("create mailbox");
+    let addr = ts.service.mailbox_addr(&mb.id).expect("listener addr");
+
+    // Connect raw TCP and wrap with rustls — the server expects a TLS
+    // ClientHello as the very first thing on the wire (no plaintext
+    // banner).
+    let sock = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let connector = TlsConnector::from(Arc::new(trust_all_client_config()));
+    let server_name = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let mut tls = connector.connect(server_name, sock).await.expect("TLS handshake");
+
+    // First bytes inside TLS should be the 220 banner.
+    let mut buf = vec![0u8; 256];
+    let n = tls.read(&mut buf).await.unwrap();
+    let banner = std::str::from_utf8(&buf[..n]).unwrap();
+    assert!(banner.starts_with("220"), "got {banner:?}");
+
+    // EHLO inside TLS — STARTTLS must NOT be advertised.
+    tls.write_all(b"EHLO test\r\n").await.unwrap();
+    let mut buf = vec![0u8; 4096];
+    // Drain until we see a final `250 ` line.
+    let mut acc = String::new();
+    loop {
+        let n = tls.read(&mut buf).await.unwrap();
+        acc.push_str(std::str::from_utf8(&buf[..n]).unwrap());
+        if acc.lines().any(|l| l.len() >= 4 && &l[..4] == "250 ") {
+            break;
+        }
+    }
+    assert!(!acc.contains("STARTTLS"), "STARTTLS leaked: {acc}");
+    assert!(acc.contains("AUTH PLAIN LOGIN"));
+}
+
 fn trust_all_client_config() -> tokio_rustls::rustls::ClientConfig {
     use tokio_rustls::rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
     use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};

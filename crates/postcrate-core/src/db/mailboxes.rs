@@ -27,6 +27,10 @@ pub struct Mailbox {
     pub fail_reason: Option<String>,
     pub created_at: i64,
     pub count: i64,
+    /// When true, the listener for this mailbox wraps every accepted
+    /// socket in rustls *before* the SMTP banner (RFC 8314 §3.3,
+    /// port-465 style). Requires `--features tls`.
+    pub implicit_tls: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -37,6 +41,8 @@ pub struct CreateMailboxInput {
     pub kind: MailboxKind,
     pub port: Option<u16>,
     pub ttl_seconds: Option<u64>,
+    #[serde(default)]
+    pub implicit_tls: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -76,6 +82,7 @@ pub(crate) struct MailboxRow {
     pub failed: bool,
     pub fail_reason: Option<String>,
     pub created_at: i64,
+    pub implicit_tls: bool,
 }
 
 impl MailboxRow {
@@ -91,6 +98,7 @@ impl MailboxRow {
             failed: self.failed,
             fail_reason: self.fail_reason,
             created_at: self.created_at,
+            implicit_tls: self.implicit_tls,
             count,
         }
     }
@@ -103,6 +111,7 @@ pub(crate) async fn insert(
     port: u16,
     kind: MailboxKind,
     ttl_seconds: Option<u64>,
+    implicit_tls: bool,
 ) -> Result<MailboxRow> {
     let now = Utc::now().timestamp_millis();
     let expires_at = ttl_seconds.map(|t| now + (t as i64) * 1000);
@@ -110,8 +119,8 @@ pub(crate) async fn insert(
 
     let res = sqlx::query(
         r"INSERT INTO mailboxes
-            (id, project_id, name, port, kind, ttl_seconds, expires_at, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (id, project_id, name, port, kind, ttl_seconds, expires_at, created_at, implicit_tls)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(project_id)
@@ -121,6 +130,7 @@ pub(crate) async fn insert(
     .bind(ttl_seconds.map(|t| t as i64))
     .bind(expires_at)
     .bind(now)
+    .bind(i64::from(implicit_tls))
     .execute(pool)
     .await;
 
@@ -136,6 +146,7 @@ pub(crate) async fn insert(
             failed: false,
             fail_reason: None,
             created_at: now,
+            implicit_tls,
         }),
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
             // Either name collision in project, or port collision globally.
@@ -153,7 +164,7 @@ pub(crate) async fn insert(
 pub(crate) async fn get(pool: &SqlitePool, id: &str) -> Result<MailboxRow> {
     let row = sqlx::query(
         r"SELECT id, project_id, name, port, kind, ttl_seconds, expires_at,
-                 failed, fail_reason, created_at
+                 failed, fail_reason, created_at, implicit_tls
           FROM mailboxes WHERE id = ?",
     )
     .bind(id)
@@ -167,7 +178,7 @@ pub(crate) async fn get(pool: &SqlitePool, id: &str) -> Result<MailboxRow> {
 pub(crate) async fn list(pool: &SqlitePool, project_id: Option<&str>) -> Result<Vec<Mailbox>> {
     let sql = if project_id.is_some() {
         r"SELECT m.id, m.project_id, m.name, m.port, m.kind, m.ttl_seconds, m.expires_at,
-                 m.failed, m.fail_reason, m.created_at,
+                 m.failed, m.fail_reason, m.created_at, m.implicit_tls,
                  COALESCE(c.cnt, 0) AS cnt
           FROM mailboxes m
           LEFT JOIN (SELECT mailbox_id, COUNT(*) AS cnt FROM emails GROUP BY mailbox_id) c
@@ -176,7 +187,7 @@ pub(crate) async fn list(pool: &SqlitePool, project_id: Option<&str>) -> Result<
           ORDER BY m.created_at ASC"
     } else {
         r"SELECT m.id, m.project_id, m.name, m.port, m.kind, m.ttl_seconds, m.expires_at,
-                 m.failed, m.fail_reason, m.created_at,
+                 m.failed, m.fail_reason, m.created_at, m.implicit_tls,
                  COALESCE(c.cnt, 0) AS cnt
           FROM mailboxes m
           LEFT JOIN (SELECT mailbox_id, COUNT(*) AS cnt FROM emails GROUP BY mailbox_id) c
@@ -323,7 +334,7 @@ pub(crate) async fn list_all_ports(pool: &SqlitePool) -> Result<Vec<u16>> {
 pub(crate) async fn list_active_for_boot(pool: &SqlitePool) -> Result<Vec<MailboxRow>> {
     let rows = sqlx::query(
         r"SELECT id, project_id, name, port, kind, ttl_seconds, expires_at,
-                 failed, fail_reason, created_at
+                 failed, fail_reason, created_at, implicit_tls
           FROM mailboxes",
     )
     .fetch_all(pool)
@@ -366,5 +377,6 @@ fn row_to_mailbox_row(row: &sqlx::sqlite::SqliteRow) -> MailboxRow {
         failed: failed_i != 0,
         fail_reason: row.try_get("fail_reason").ok(),
         created_at: row.try_get("created_at").unwrap_or(0),
+        implicit_tls: row.try_get::<i64, _>("implicit_tls").unwrap_or(0) != 0,
     }
 }

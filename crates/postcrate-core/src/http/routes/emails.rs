@@ -24,6 +24,7 @@ pub fn router() -> Router<ServiceHandle> {
         .route("/messages/{id}/pin", post(set_pin))
         .route("/messages/{id}/star", post(set_star))
         .route("/messages/{id}/note", post(set_note))
+        .route("/messages/{id}/tag", post(set_tag))
         .route("/messages/{id}/release", post(release))
 }
 
@@ -165,6 +166,21 @@ async fn set_note(
 ) -> Result<Json<serde_json::Value>> {
     h.as_service().set_note(&id, body.note.as_deref()).await?;
     Ok(Json(serde_json::json!({"note": body.note})))
+}
+
+#[derive(serde::Deserialize)]
+struct TagBody {
+    /// `null` clears the tag.
+    tag: Option<String>,
+}
+
+async fn set_tag(
+    State(h): State<ServiceHandle>,
+    Path(id): Path<String>,
+    Json(body): Json<TagBody>,
+) -> Result<Json<serde_json::Value>> {
+    h.as_service().set_tag(&id, body.tag.as_deref()).await?;
+    Ok(Json(serde_json::json!({"tag": body.tag})))
 }
 
 #[derive(serde::Deserialize)]

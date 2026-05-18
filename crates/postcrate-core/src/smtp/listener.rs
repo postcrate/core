@@ -38,6 +38,12 @@ pub struct ListenerSpec {
     /// STARTTLS in EHLO and upgrade sessions that request it. When
     /// `None`, STARTTLS is rejected with `454 TLS not available`.
     pub tls_acceptor: Option<Arc<TlsAcceptor>>,
+    /// Implicit-TLS (port-465 style). When true, the listener wraps
+    /// every accepted socket with `tls_acceptor` *before* the SMTP
+    /// banner. Requires `tls_acceptor.is_some()` and `--features tls`.
+    /// STARTTLS is not advertised inside an implicit-TLS session
+    /// (RFC 8314 §3.3).
+    pub implicit_tls: bool,
 }
 
 pub async fn start(spec: ListenerSpec) -> Result<ListenerHandle> {
@@ -64,7 +70,13 @@ async fn accept_loop(
     cancel: CancellationToken,
     spec: ListenerSpec,
 ) {
-    let ehlo = Arc::new(spec.ehlo_advert);
+    // For implicit TLS we suppress the STARTTLS advert (RFC 8314)
+    // since the session is already encrypted.
+    let mut ehlo_for_session = spec.ehlo_advert.clone();
+    if spec.implicit_tls {
+        ehlo_for_session.starttls_enabled = false;
+    }
+    let ehlo = Arc::new(ehlo_for_session);
     let incoming_dir = Arc::new(spec.incoming_dir);
 
     loop {
@@ -86,10 +98,14 @@ async fn accept_loop(
                         chaos: spec.chaos.clone(),
                         bounce: spec.bounce.clone(),
                         ingest_tx: spec.ingest_tx.clone(),
-                        tls_active: false,
+                        // Implicit TLS: the very first byte over the wire
+                        // is a TLS ClientHello. After the wrap, the session
+                        // runs with tls_active=true from the start.
+                        tls_active: spec.implicit_tls,
                     };
                     let acceptor = spec.tls_acceptor.clone();
-                    tokio::spawn(handle_connection(stream, ctx, acceptor));
+                    let implicit = spec.implicit_tls;
+                    tokio::spawn(handle_connection(stream, ctx, acceptor, implicit));
                 }
                 Err(e) => {
                     tracing::warn!(target: "postcrate::smtp", error = %e, "accept failed");
@@ -105,7 +121,35 @@ async fn handle_connection(
     stream: tokio::net::TcpStream,
     ctx: SessionCtx,
     tls_acceptor: Option<Arc<TlsAcceptor>>,
+    implicit_tls: bool,
 ) {
+    // Implicit TLS path: wrap immediately, then run the session on the
+    // TLS stream. STARTTLS isn't reachable because we suppress its
+    // EHLO advert in `accept_loop`.
+    #[cfg(feature = "tls")]
+    if implicit_tls {
+        let Some(acceptor) = tls_acceptor.clone() else {
+            tracing::warn!(target: "postcrate::smtp", "implicit_tls set but no acceptor configured");
+            return;
+        };
+        let tls_stream = match acceptor.accept(stream).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(target: "postcrate::smtp", error = %e, "implicit TLS handshake failed");
+                return;
+            }
+        };
+        if let Err(e) = run_session(tls_stream, ctx).await {
+            tracing::warn!(target: "postcrate::smtp", error = %e, "session error (implicit TLS)");
+        }
+        return;
+    }
+
+    #[cfg(not(feature = "tls"))]
+    {
+        let _ = implicit_tls;
+    }
+
     let outcome = match run_session(stream, ctx.clone()).await {
         Ok(o) => o,
         Err(e) => {
@@ -122,7 +166,6 @@ async fn handle_connection(
     #[cfg(feature = "tls")]
     {
         let Some(acceptor) = tls_acceptor else {
-            // We advertised STARTTLS but lost the acceptor — abnormal.
             tracing::warn!(target: "postcrate::smtp", "upgrade requested with no acceptor configured");
             return;
         };
@@ -142,9 +185,6 @@ async fn handle_connection(
 
     #[cfg(not(feature = "tls"))]
     {
-        // When the feature is off we never advertise STARTTLS, so the
-        // session never returns UpgradeTls. The branch is here only to
-        // make types line up.
         let _ = (stream, tls_acceptor);
     }
 }

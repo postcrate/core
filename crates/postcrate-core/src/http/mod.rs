@@ -2,6 +2,7 @@
 //! `settings.network.expose_on_lan` at startup. All routes consume a
 //! `ServiceHandle` cloned into Axum's state.
 
+pub mod auth;
 pub mod dto;
 pub mod error;
 pub mod routes;
@@ -9,6 +10,7 @@ pub mod routes;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use axum::middleware;
 use axum::Router;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -61,7 +63,7 @@ pub async fn start(handle: ServiceHandle) -> Result<HttpServerHandle> {
     }
     let bind = SocketAddr::new(bind_host.as_ip(), port);
 
-    let app = Router::new()
+    let mut app = Router::new()
         .merge(routes::router())
         .with_state(handle.clone())
         .layer(TraceLayer::new_for_http())
@@ -71,6 +73,18 @@ pub async fn start(handle: ServiceHandle) -> Result<HttpServerHandle> {
             axum::http::StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(30),
         ));
+
+    // Optional bearer-token auth on every /api/v1/... route.
+    if let Some(token) = settings.network.api_auth_token.clone().filter(|s| !s.is_empty()) {
+        tracing::info!(
+            target: "postcrate::http",
+            "HTTP API bearer-token auth enabled"
+        );
+        app = app.layer(middleware::from_fn(move |req, next| {
+            let token = token.clone();
+            async move { auth::require_bearer(&token, req, next).await }
+        }));
+    }
 
     let listener = tokio::net::TcpListener::bind(bind)
         .await
@@ -82,6 +96,64 @@ pub async fn start(handle: ServiceHandle) -> Result<HttpServerHandle> {
     let shutdown = CancellationToken::new();
     let shutdown_child = shutdown.clone();
 
+    // HTTPS path: requires the `tls` feature + a configured cert+key.
+    // Without the feature the API always runs plaintext (the cert
+    // config is ignored).
+    #[cfg(feature = "tls")]
+    let api_tls = settings.network.api_tls
+        && cfg.tls.enabled
+        && cfg.tls.cert_path.is_some()
+        && cfg.tls.key_path.is_some();
+    #[cfg(not(feature = "tls"))]
+    let api_tls = false;
+
+    #[cfg(feature = "tls")]
+    let task = if api_tls {
+        // axum-server is built without a default rustls crypto
+        // provider; install ring here (tokio-rustls already pulled
+        // it in transitively). Idempotent — subsequent calls no-op.
+        let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+        let cert = cfg.tls.cert_path.as_ref().unwrap().clone();
+        let key = cfg.tls.key_path.as_ref().unwrap().clone();
+        drop(listener);
+        let shutdown_child = shutdown_child.clone();
+        tokio::spawn(async move {
+            let tls_config = match axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert, &key)
+                .await
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!(target: "postcrate::http", error = %e, "load TLS pem failed");
+                    return;
+                }
+            };
+            let handle = axum_server::Handle::new();
+            let handle_for_shutdown = handle.clone();
+            tokio::spawn(async move {
+                shutdown_child.cancelled().await;
+                handle_for_shutdown.graceful_shutdown(Some(Duration::from_secs(5)));
+            });
+            if let Err(e) = axum_server::bind_rustls(bind, tls_config)
+                .handle(handle)
+                .serve(app.into_make_service())
+                .await
+            {
+                tracing::error!(target: "postcrate::http", error = %e, "https server exited");
+            }
+        })
+    } else {
+        tokio::spawn(async move {
+            let serve = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    shutdown_child.cancelled().await;
+                });
+            if let Err(e) = serve.await {
+                tracing::error!(target: "postcrate::http", error = %e, "http server exited");
+            }
+        })
+    };
+
+    #[cfg(not(feature = "tls"))]
     let task = tokio::spawn(async move {
         let serve = axum::serve(listener, app)
             .with_graceful_shutdown(async move {
@@ -92,7 +164,12 @@ pub async fn start(handle: ServiceHandle) -> Result<HttpServerHandle> {
         }
     });
 
-    tracing::info!(target: "postcrate::http", addr = %local_addr, "http api listening");
+    tracing::info!(
+        target: "postcrate::http",
+        addr = %local_addr,
+        tls = api_tls,
+        "http api listening"
+    );
 
     Ok(HttpServerHandle {
         addr: local_addr,

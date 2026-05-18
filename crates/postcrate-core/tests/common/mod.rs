@@ -88,6 +88,7 @@ impl TestService {
                 kind: MailboxKind::Primary,
                 port: Some(port),
                 ttl_seconds: None,
+                implicit_tls: false,
             })
             .await
             .expect("create primary")

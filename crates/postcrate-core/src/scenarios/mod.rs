@@ -9,4 +9,5 @@
 
 pub mod auth;
 pub mod links;
+pub mod list_unsub;
 pub mod spam;

@@ -65,6 +65,7 @@ async fn main() -> Result<()> {
             kind: MailboxKind::Primary,
             port: Some(cli.smtp),
             ttl_seconds: None,
+            implicit_tls: false,
         })
         .await;
     let _ = cli.auto_port; // reserved for future "find first free port" behavior
