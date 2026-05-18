@@ -27,9 +27,6 @@ struct Cli {
     bind: String,
     #[arg(long)]
     data_dir: Option<PathBuf>,
-    /// Allocate fresh ports if the requested ones are taken.
-    #[arg(long, default_value_t = true)]
-    auto_port: bool,
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
@@ -68,8 +65,6 @@ async fn main() -> Result<()> {
             implicit_tls: false,
         })
         .await;
-    let _ = cli.auto_port; // reserved for future "find first free port" behavior
-
     svc.start_all().await?;
 
     let bind = cfg.bind_host.as_ip();

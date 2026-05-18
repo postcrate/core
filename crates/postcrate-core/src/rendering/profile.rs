@@ -1,15 +1,13 @@
 //! Per-client profile transforms.
 //!
-//! Each profile gets an HTML blob and returns it with the client's
-//! known limitations applied. We deliberately ship a small number of
-//! high-quality profiles ("ship fewer profiles at
-//! higher fidelity rather than more at lower"). The transforms are
-//! deterministic regex/HTML rewrites — no headless browser, no
-//! network.
+//! Each profile takes an HTML blob and returns it with the client's
+//! known limitations applied. The transforms are deterministic
+//! regex/HTML rewrites — no headless browser, no network access.
 //!
-//! When you add a new profile: bump the test coverage in this file
-//! and document its fidelity in `docs/RENDERING.md`. A profile that
-//! lies about what it simulates is worse than no profile.
+//! When adding a new profile, extend the test coverage in this file
+//! and update the profile's `fidelity` so callers can label previews
+//! honestly. A profile that lies about what it simulates is worse
+//! than no profile.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};

@@ -1,6 +1,7 @@
-//! App-wide error type. Every public method on [`crate::Service`] returns
-//! `Result<_, Error>`. Boundary adapters (Axum, Tauri shims) convert this
-//! into HTTP status codes or `String`s.
+//! Crate-wide error type. Every public method on [`crate::Service`] returns
+//! `Result<_, Error>`. Boundary adapters (the built-in Axum routes,
+//! downstream UI shims) convert this into HTTP status codes or whatever
+//! shape the surrounding host expects.
 
 use std::io;
 

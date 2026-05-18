@@ -41,10 +41,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations)]
 #![warn(clippy::pedantic)]
-// Several public-API items (TLS scaffolding, reply helpers reserved for
-// edge cases, diagnostic fields on listener handles) are dead from the
-// compiler's POV because the consumers live in downstream repos. The
-// lint isn't useful for us until the API stabilizes.
+// Several public-API items (TLS scaffolding, less-common reply helpers,
+// diagnostic fields on listener handles) read as dead-code to the
+// compiler because their consumers live in downstream binaries and
+// integration tests rather than the library crate itself.
 #![allow(dead_code)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::missing_errors_doc)]

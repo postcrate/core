@@ -1,4 +1,4 @@
--- 0006_email_tag.sql — auto-detected tag column for FR-UX-30.
+-- 0006_email_tag.sql — auto-detected tag column on the emails row.
 --
 -- One tag per email; the classifier (`core::tagging`) picks the
 -- strongest match. NULL means "not classified yet". The UI can

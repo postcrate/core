@@ -1,5 +1,5 @@
-//! The one public façade. All HTTP routes, all Tauri command shims,
-//! all CLI subcommands speak only to this type.
+//! The single public façade. The built-in HTTP routes, downstream
+//! command shims, and CLI subcommands all speak only to this type.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,8 +48,8 @@ pub(crate) struct Inner {
     pub sink: Arc<dyn EventSink>,
     /// In-process fan-out for `Service::subscribe`. Wrapped under the
     /// user-provided sink via `ComposedSink` so every emission reaches
-    /// both the embedder (LogSink / TauriEventSink / …) and any
-    /// `subscribe()` consumers (CLI tail, SSE endpoint, wait_for_email).
+    /// both the embedder's sink and any in-process `subscribe()`
+    /// consumers (CLI tail, SSE endpoint, `wait_for_email`).
     pub events: ChannelSink,
     pub cancel: CancellationToken,
     http_handle: parking_lot::Mutex<Option<http::HttpServerHandle>>,

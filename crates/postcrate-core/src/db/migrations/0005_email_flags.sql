@@ -1,4 +1,4 @@
--- 0005_email_flags.sql — pin/star/note per FR-UX-40 and FR-UX-50.
+-- 0005_email_flags.sql — per-email pin/star/note flags.
 --
 -- All three live on the `emails` row instead of a side table: they're
 -- per-email boolean/text flags, accessed alongside every other row

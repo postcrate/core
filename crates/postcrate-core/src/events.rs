@@ -1,6 +1,7 @@
-//! UI-agnostic event emission. Consumers (Tauri shells, CLI tail
-//! commands, embedded tests) implement [`EventSink`] and pass it to
-//! [`crate::Service::build`]. The engine never touches a UI framework.
+//! UI-agnostic event emission. Consumers — desktop shells, CLI tail
+//! commands, integration tests — implement [`EventSink`] and pass it
+//! to [`crate::Service::build`]. The engine never touches a UI
+//! framework directly.
 
 use std::sync::Arc;
 
