@@ -1,6 +1,6 @@
-//! End-to-end tests for `Service::wait_for_email` + `assert_email_matches`
-//! and their HTTP surface. Verifies the predicate primitive shared by
-//! MCP, CLI, and matcher packages.
+//! End-to-end tests for `Service::wait_for_email` and
+//! `Service::assert_email_matches`, plus their HTTP routes. Exercises
+//! the matcher primitive end to end against a live SMTP listener.
 
 mod common;
 
