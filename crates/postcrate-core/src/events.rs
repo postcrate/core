@@ -21,7 +21,7 @@ pub trait EventSink: Send + Sync + 'static {
 /// consumers using `Sink: EventSink` only have to handle what they know.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum CoreEvent {
     NewEmail {
         mailbox_id: String,
@@ -44,7 +44,7 @@ pub enum CoreEvent {
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum MailboxStateChange {
     Created,
     Updated,
