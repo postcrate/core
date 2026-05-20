@@ -15,6 +15,7 @@ use serde::Serialize;
 use crate::mail::parse::Parsed;
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct LinkReport {
     pub links: Vec<DetectedLink>,
@@ -22,6 +23,7 @@ pub struct LinkReport {
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct LinkCounts {
     pub total: u32,
@@ -32,6 +34,7 @@ pub struct LinkCounts {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct DetectedLink {
     pub url: String,
@@ -41,6 +44,7 @@ pub struct DetectedLink {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "lowercase")]
 pub enum LinkKind {
     Http,

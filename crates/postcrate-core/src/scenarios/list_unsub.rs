@@ -16,6 +16,7 @@ use serde::Serialize;
 use crate::mail::parse::Parsed;
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct UnsubReport {
     pub present: bool,
@@ -26,6 +27,7 @@ pub struct UnsubReport {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct UnsubUri {
     pub raw: String,
@@ -33,6 +35,7 @@ pub struct UnsubUri {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct UnsubFinding {
     pub rule: &'static str,

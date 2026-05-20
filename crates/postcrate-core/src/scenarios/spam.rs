@@ -15,6 +15,7 @@ use serde::Serialize;
 use crate::mail::parse::Parsed;
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct SpamReport {
     pub score: f32,
@@ -23,6 +24,7 @@ pub struct SpamReport {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "lowercase")]
 pub enum SpamVerdict {
     /// Score < 2.0.
@@ -34,6 +36,7 @@ pub enum SpamVerdict {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct SpamFactor {
     pub rule: &'static str,

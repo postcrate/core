@@ -14,6 +14,7 @@ use serde::Serialize;
 use crate::mail::parse::Parsed;
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct AuthReport {
     pub spf: AuthVerdict,
@@ -27,6 +28,7 @@ pub struct AuthReport {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "lowercase")]
 pub enum AuthVerdict {
     Pass,

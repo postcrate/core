@@ -8,12 +8,14 @@
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct LintReport {
     pub warnings: Vec<LintWarning>,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct LintWarning {
     pub rule: &'static str,
@@ -23,7 +25,7 @@ pub struct LintWarning {
     /// Where in the HTML we hit it — UI can highlight.
     pub byte_offset: Option<usize>,
     /// Which clients are affected by this issue.
-    pub affects: &'static [&'static str],
+    pub affects: Vec<&'static str>,
 }
 
 pub fn lint(html: &str) -> LintReport {
@@ -38,7 +40,7 @@ pub fn lint(html: &str) -> LintReport {
                 severity: "high",
                 message: "Gmail / Outlook Web strip <style> blocks inside <body>. Move them to <head> or inline.",
                 byte_offset: Some(body_pos + style_pos),
-                affects: &["Gmail Web", "Gmail iOS", "Outlook Web", "Yahoo Mail"],
+                affects: vec!["Gmail Web", "Gmail iOS", "Outlook Web", "Yahoo Mail"],
             });
         }
     }
@@ -50,7 +52,7 @@ pub fn lint(html: &str) -> LintReport {
             severity: "high",
             message: "CSS Grid is not supported in Outlook or older Gmail clients. Use tables.",
             byte_offset: Some(pos),
-            affects: &["Outlook Desktop", "Outlook Web", "Gmail iOS"],
+            affects: vec!["Outlook Desktop", "Outlook Web", "Gmail iOS"],
         });
     }
 
@@ -61,7 +63,7 @@ pub fn lint(html: &str) -> LintReport {
             severity: "medium",
             message: "Flexbox is unsupported in Outlook Desktop. Provide a table fallback.",
             byte_offset: Some(pos),
-            affects: &["Outlook Desktop"],
+            affects: vec!["Outlook Desktop"],
         });
     }
 
@@ -72,7 +74,7 @@ pub fn lint(html: &str) -> LintReport {
             severity: "medium",
             message: "Outlook ignores @import @font-face. Declare a system-font fallback.",
             byte_offset: Some(pos),
-            affects: &["Outlook Desktop"],
+            affects: vec!["Outlook Desktop"],
         });
     }
 
@@ -86,7 +88,7 @@ pub fn lint(html: &str) -> LintReport {
             severity: "high",
             message: "External stylesheets are not loaded by most email clients. Inline the CSS.",
             byte_offset: Some(pos),
-            affects: &["Gmail Web", "Gmail iOS", "Outlook Desktop", "Outlook Web", "Yahoo Mail"],
+            affects: vec!["Gmail Web", "Gmail iOS", "Outlook Desktop", "Outlook Web", "Yahoo Mail"],
         });
     }
 
@@ -97,7 +99,7 @@ pub fn lint(html: &str) -> LintReport {
             severity: "high",
             message: "JavaScript is stripped by every major email client. Remove <script> tags.",
             byte_offset: Some(pos),
-            affects: &["All clients"],
+            affects: vec!["All clients"],
         });
     }
 
@@ -108,7 +110,7 @@ pub fn lint(html: &str) -> LintReport {
             severity: "medium",
             message: "<video>/<audio> are not supported in most clients. Use a static preview image.",
             byte_offset: None,
-            affects: &["Outlook Desktop", "Outlook Web", "Yahoo Mail"],
+            affects: vec!["Outlook Desktop", "Outlook Web", "Yahoo Mail"],
         });
     }
 
@@ -119,7 +121,7 @@ pub fn lint(html: &str) -> LintReport {
             severity: "high",
             message: "Absolute positioning is unreliable across clients; use tables for layout.",
             byte_offset: None,
-            affects: &["Outlook Desktop", "Outlook Web", "Gmail Web"],
+            affects: vec!["Outlook Desktop", "Outlook Web", "Gmail Web"],
         });
     }
 

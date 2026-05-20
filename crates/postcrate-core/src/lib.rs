@@ -120,6 +120,13 @@ pub use crate::events::{
 pub use crate::mailbox::kinds::MailboxKind;
 pub use crate::matcher::{EmailPredicate, HeaderPredicate, MatchResult, WaitOutcome};
 pub use crate::recording::{Recording, RecordedEnvelope, RecordedMessage, RECORDING_VERSION};
+pub use crate::rendering::a11y::{A11yFinding, A11yReport};
+pub use crate::rendering::lint::{LintReport, LintWarning};
+pub use crate::rendering::profile::{Fidelity, Profile, RenderedPreview};
+pub use crate::scenarios::auth::{AuthReport, AuthVerdict};
+pub use crate::scenarios::links::{DetectedLink, LinkCounts, LinkKind, LinkReport};
+pub use crate::scenarios::list_unsub::{UnsubFinding, UnsubReport, UnsubUri};
+pub use crate::scenarios::spam::{SpamFactor, SpamReport, SpamVerdict};
 pub use crate::smtp::relay::RelayConfig;
 pub use crate::tagging::EmailTag;
 pub use crate::service::Service;
