@@ -16,8 +16,8 @@ edition = "2021"
 rust-version = "1.78"
 license = "MIT"
 authors = ["Postcrate authors"]
-repository = "https://github.com/postcrate/postcrate-core"
-homepage = "https://postcrate.dev"
+repository = "https://github.com/postcrate/core"
+homepage = "https://github.com/postcrate/core"
 readme = "README.md"
 
 [workspace.dependencies]

@@ -9,6 +9,8 @@ repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
 description = "Embeddable SMTP capture engine: server, multi-mailbox lifecycle, chaos simulation, SQLite persistence, HTTP API."
+keywords = ["smtp", "email", "mailbox", "testing", "mock"]
+categories = ["email", "development-tools::testing", "network-programming"]
 
 [lib]
 name = "postcrate_core"
