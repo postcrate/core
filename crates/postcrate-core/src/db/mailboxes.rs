@@ -32,6 +32,9 @@ pub struct Mailbox {
     /// socket in rustls *before* the SMTP banner (RFC 8314 §3.3,
     /// port-465 style). Requires `--features tls`.
     pub implicit_tls: bool,
+    /// User-stopped (not failed): the mailbox exists but its listener
+    /// is intentionally not bound. Survives app restarts so Stop sticks.
+    pub paused: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -88,6 +91,7 @@ pub(crate) struct MailboxRow {
     pub fail_reason: Option<String>,
     pub created_at: i64,
     pub implicit_tls: bool,
+    pub paused: bool,
 }
 
 impl MailboxRow {
@@ -104,6 +108,7 @@ impl MailboxRow {
             fail_reason: self.fail_reason,
             created_at: self.created_at,
             implicit_tls: self.implicit_tls,
+            paused: self.paused,
             count,
         }
     }
@@ -152,6 +157,7 @@ pub(crate) async fn insert(
             fail_reason: None,
             created_at: now,
             implicit_tls,
+            paused: false,
         }),
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
             // Either name collision in project, or port collision globally.
@@ -169,7 +175,7 @@ pub(crate) async fn insert(
 pub(crate) async fn get(pool: &SqlitePool, id: &str) -> Result<MailboxRow> {
     let row = sqlx::query(
         r"SELECT id, project_id, name, port, kind, ttl_seconds, expires_at,
-                 failed, fail_reason, created_at, implicit_tls
+                 failed, fail_reason, created_at, implicit_tls, paused
           FROM mailboxes WHERE id = ?",
     )
     .bind(id)
@@ -183,7 +189,7 @@ pub(crate) async fn get(pool: &SqlitePool, id: &str) -> Result<MailboxRow> {
 pub(crate) async fn list(pool: &SqlitePool, project_id: Option<&str>) -> Result<Vec<Mailbox>> {
     let sql = if project_id.is_some() {
         r"SELECT m.id, m.project_id, m.name, m.port, m.kind, m.ttl_seconds, m.expires_at,
-                 m.failed, m.fail_reason, m.created_at, m.implicit_tls,
+                 m.failed, m.fail_reason, m.created_at, m.implicit_tls, m.paused,
                  COALESCE(c.cnt, 0) AS cnt
           FROM mailboxes m
           LEFT JOIN (SELECT mailbox_id, COUNT(*) AS cnt FROM emails GROUP BY mailbox_id) c
@@ -192,7 +198,7 @@ pub(crate) async fn list(pool: &SqlitePool, project_id: Option<&str>) -> Result<
           ORDER BY m.created_at ASC"
     } else {
         r"SELECT m.id, m.project_id, m.name, m.port, m.kind, m.ttl_seconds, m.expires_at,
-                 m.failed, m.fail_reason, m.created_at, m.implicit_tls,
+                 m.failed, m.fail_reason, m.created_at, m.implicit_tls, m.paused,
                  COALESCE(c.cnt, 0) AS cnt
           FROM mailboxes m
           LEFT JOIN (SELECT mailbox_id, COUNT(*) AS cnt FROM emails GROUP BY mailbox_id) c
@@ -296,6 +302,18 @@ pub(crate) async fn clear_failed(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Set the paused flag. Returns Ok even if no row matched — the
+/// service-level layer turns "no row" into `MailboxNotFound` via its
+/// own get() call before the listener-state side effect runs.
+pub(crate) async fn set_paused(pool: &SqlitePool, id: &str, paused: bool) -> Result<()> {
+    sqlx::query("UPDATE mailboxes SET paused = ? WHERE id = ?")
+        .bind(i64::from(paused))
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Drop expired ephemerals at boot. Returns IDs that were swept so the
 /// caller can also clean up any orphan raw blobs.
 pub(crate) async fn sweep_expired_ephemerals(pool: &SqlitePool) -> Result<Vec<String>> {
@@ -339,7 +357,7 @@ pub(crate) async fn list_all_ports(pool: &SqlitePool) -> Result<Vec<u16>> {
 pub(crate) async fn list_active_for_boot(pool: &SqlitePool) -> Result<Vec<MailboxRow>> {
     let rows = sqlx::query(
         r"SELECT id, project_id, name, port, kind, ttl_seconds, expires_at,
-                 failed, fail_reason, created_at, implicit_tls
+                 failed, fail_reason, created_at, implicit_tls, paused
           FROM mailboxes",
     )
     .fetch_all(pool)
@@ -383,5 +401,6 @@ fn row_to_mailbox_row(row: &sqlx::sqlite::SqliteRow) -> MailboxRow {
         fail_reason: row.try_get("fail_reason").ok(),
         created_at: row.try_get("created_at").unwrap_or(0),
         implicit_tls: row.try_get::<i64, _>("implicit_tls").unwrap_or(0) != 0,
+        paused: row.try_get::<i64, _>("paused").unwrap_or(0) != 0,
     }
 }

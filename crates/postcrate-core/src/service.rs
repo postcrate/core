@@ -53,6 +53,14 @@ pub(crate) struct Inner {
     pub events: ChannelSink,
     pub cancel: CancellationToken,
     http_handle: parking_lot::Mutex<Option<http::HttpServerHandle>>,
+    /// Serializes `restart_http` so two concurrent network-pref updates
+    /// can't race and orphan a listener. Held across the shutdown +
+    /// rebind cycle, which is why it's tokio rather than parking_lot.
+    http_restart_lock: tokio::sync::Mutex<()>,
+    /// Hook the embedder installs to flip the global tracing filter
+    /// when `AdvancedPrefs.debug_logging` changes. The engine doesn't
+    /// own the subscriber stack — it just signals the level it wants.
+    log_controller: parking_lot::Mutex<Option<Arc<dyn Fn(bool) + Send + Sync>>>,
     started: parking_lot::Mutex<bool>,
     /// Hold these so they're cancelled with the service.
     _ingest_task: tokio::task::JoinHandle<()>,
@@ -130,6 +138,8 @@ impl Service {
                 events,
                 cancel,
                 http_handle: parking_lot::Mutex::new(None),
+                http_restart_lock: tokio::sync::Mutex::new(()),
+                log_controller: parking_lot::Mutex::new(None),
                 started: parking_lot::Mutex::new(false),
                 _ingest_task: ingest_task,
                 _retention_task: retention_task,
@@ -148,6 +158,17 @@ impl Service {
         self.inner.events.subscribe()
     }
 
+    /// Install a callback the engine invokes when the persisted
+    /// `AdvancedPrefs.debug_logging` value changes (and once at
+    /// `start_all` to honor the initial value). The embedder owns the
+    /// `tracing_subscriber` stack; this lets the engine drive a filter
+    /// reload without depending on the subscriber implementation.
+    ///
+    /// Idempotent — calling it again replaces the previous controller.
+    pub fn set_log_level_controller(&self, ctl: Arc<dyn Fn(bool) + Send + Sync>) {
+        *self.inner.log_controller.lock() = Some(ctl);
+    }
+
     /// Start every persisted mailbox's listener + the HTTP API.
     /// Idempotent.
     pub async fn start_all(&self) -> Result<()> {
@@ -159,9 +180,57 @@ impl Service {
             *s = true;
         }
 
+        // Apply persisted Advanced prefs *before* listeners spin up so
+        // the very first SMTP session and the very first log line
+        // honor the user's choices. Both `mailboxes.boot()` and
+        // `http::start()` are wired to read these on the fly.
+        let advanced = db_settings::load_all(&self.inner.pool).await?.advanced;
+        self.inner
+            .mailboxes
+            .set_preserve_transcript(advanced.preserve_smtp_transcript);
+
+        // Clone the log controller out of the mutex before any `.await`
+        // so the parking_lot guard isn't held across the suspension
+        // point (which would make the future `!Send`).
+        let log_ctl = self.inner.log_controller.lock().clone();
+        if let Some(ctl) = log_ctl {
+            ctl(advanced.debug_logging);
+        }
+
         self.inner.mailboxes.boot().await?;
         let http = http::start(self.clone_handle()).await?;
         *self.inner.http_handle.lock() = Some(http);
+
+        self.emit_status();
+        Ok(())
+    }
+
+    /// Tear down the running HTTP listener (if any) and start a fresh
+    /// one with whatever's currently persisted in `BackendSettings`.
+    /// Used by `update_settings` to apply network-pref changes live
+    /// without requiring an app restart.
+    ///
+    /// No-op when the service hasn't reached `start_all` yet — the
+    /// boot path will pick up the new settings when it gets there. If
+    /// the rebind fails, the previous listener stays torn down and the
+    /// error is propagated so the caller can revert the patch.
+    pub async fn restart_http(&self) -> Result<()> {
+        let _guard = self.inner.http_restart_lock.lock().await;
+
+        if !*self.inner.started.lock() {
+            return Ok(());
+        }
+
+        let old = self.inner.http_handle.lock().take();
+        if let Some(h) = old {
+            h.shutdown.cancel();
+            let _ = h.task.await;
+        }
+
+        let new = http::start(self.clone_handle()).await?;
+        let addr = new.addr;
+        *self.inner.http_handle.lock() = Some(new);
+        tracing::info!(target: "postcrate::http", addr = %addr, "http api restarted");
 
         self.emit_status();
         Ok(())
@@ -268,6 +337,55 @@ impl Service {
         Ok(())
     }
 
+    /// Suggest a free SMTP port for a new mailbox. Walks upward from
+    /// `start` (defaulting to 1025), skipping ports already in use by
+    /// another mailbox in this DB and probe-binding each candidate so
+    /// external collisions are caught too. Cheap (microseconds per
+    /// probe on loopback) so we don't bother caching engine-side.
+    ///
+    /// Advisory only: the actual `create_mailbox` is authoritative and
+    /// will return `PortInUse` if the suggestion was beaten by a
+    /// racing create or by a process that grabbed the port between
+    /// the suggestion and the bind.
+    pub async fn suggest_mailbox_port(&self, start: Option<u16>) -> Result<u16> {
+        use std::collections::HashSet;
+
+        let taken: HashSet<u16> = db_mb::list_all_ports(&self.inner.pool)
+            .await?
+            .into_iter()
+            .collect();
+        let host = self.inner.config.bind_host.as_ip();
+        let start = start.unwrap_or(1025);
+        crate::mailbox::ports::find_free_port(start, host, &taken).await
+    }
+
+    /// Bring a mailbox's SMTP listener online and clear the persistent
+    /// `paused` intent. Idempotent — calling it on a running mailbox
+    /// returns Ok. Bind failures propagate so the UI can revert its
+    /// optimistic update and show the actual reason.
+    pub async fn start_mailbox(&self, id: &str) -> Result<()> {
+        // Clear the user-intent flag first so a successful start sticks
+        // across a subsequent restart; if the start itself fails the
+        // intent still says "should be running" which matches what the
+        // user just asked for, and `failed=1` makes the pill red so
+        // they see the problem.
+        db_mb::set_paused(&self.inner.pool, id, false).await?;
+        self.inner.mailboxes.start(id).await?;
+        self.audit("user", "mailbox.start", Some("mailbox"), Some(id), None)
+            .await;
+        Ok(())
+    }
+
+    /// Tear down a mailbox's SMTP listener and remember the user
+    /// intent so the listener stays down across restarts. Idempotent.
+    pub async fn stop_mailbox(&self, id: &str) -> Result<()> {
+        db_mb::set_paused(&self.inner.pool, id, true).await?;
+        self.inner.mailboxes.stop(id).await?;
+        self.audit("user", "mailbox.stop", Some("mailbox"), Some(id), None)
+            .await;
+        Ok(())
+    }
+
     pub async fn create_ephemeral(
         &self,
         input: CreateEphemeralInput,
@@ -329,9 +447,23 @@ impl Service {
         Ok(tokio::fs::read(&path).await?)
     }
 
+    /// Load the SMTP transcript captured at ingest time, if present.
+    /// Returns `Ok(None)` when the email exists but the transcript pref
+    /// was off when it was received (the common case for older mail).
+    pub async fn get_email_smtp_transcript(&self, id: &str) -> Result<Option<String>> {
+        let path = db_emails::get_raw_path(&self.inner.pool, id).await?;
+        let transcript_path =
+            crate::pipeline::ingest::transcript_path_for(std::path::Path::new(&path));
+        match tokio::fs::read_to_string(&transcript_path).await {
+            Ok(s) => Ok(Some(s)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub async fn delete_email(&self, id: &str) -> Result<()> {
         let raw_path = db_emails::delete(&self.inner.pool, id).await?;
-        let _ = tokio::fs::remove_file(&raw_path).await;
+        delete_email_artifacts(&raw_path).await;
         self.audit("user", "email.delete", Some("email"), Some(id), None).await;
         Ok(())
     }
@@ -342,7 +474,7 @@ impl Service {
     pub async fn clear_mailbox(&self, mailbox_id: &str) -> Result<u64> {
         let (n, paths) = db_emails::clear_mailbox(&self.inner.pool, mailbox_id, true).await?;
         for p in &paths {
-            let _ = tokio::fs::remove_file(p).await;
+            delete_email_artifacts(p).await;
         }
         self.audit(
             "user",
@@ -360,7 +492,7 @@ impl Service {
     pub async fn purge_mailbox(&self, mailbox_id: &str) -> Result<u64> {
         let (n, paths) = db_emails::clear_mailbox(&self.inner.pool, mailbox_id, false).await?;
         for p in &paths {
-            let _ = tokio::fs::remove_file(p).await;
+            delete_email_artifacts(p).await;
         }
         self.audit(
             "user",
@@ -534,8 +666,55 @@ impl Service {
 
     pub async fn update_settings(&self, patch: SettingsPatch) -> Result<()> {
         let section = patch.section();
+
+        // For network changes, decide whether the running HTTP listener
+        // needs a rebind by comparing the incoming patch against the
+        // currently-persisted values. We snapshot *before* apply_patch
+        // so a partial DB write can't be misread as "nothing changed".
+        let needs_http_restart = if let SettingsPatch::Network(next) = &patch {
+            let prev = db_settings::load_all(&self.inner.pool).await?.network;
+            prev.http_api_port != next.http_api_port
+                || prev.api_auth_token != next.api_auth_token
+                || prev.expose_on_lan != next.expose_on_lan
+                || prev.api_tls != next.api_tls
+        } else {
+            false
+        };
+
+        // For Advanced changes, capture the deltas we react to live:
+        // debug logging (filter reload) and SMTP transcript capture
+        // (flag flip shared with running listeners). Same
+        // snapshot-before-write rationale as HTTP.
+        let mut new_debug_logging = None;
+        let mut new_preserve_transcript = None;
+        if let SettingsPatch::Advanced(next) = &patch {
+            let prev = db_settings::load_all(&self.inner.pool).await?.advanced;
+            if prev.debug_logging != next.debug_logging {
+                new_debug_logging = Some(next.debug_logging);
+            }
+            if prev.preserve_smtp_transcript != next.preserve_smtp_transcript {
+                new_preserve_transcript = Some(next.preserve_smtp_transcript);
+            }
+        }
+
         db_settings::apply_patch(&self.inner.pool, &patch).await?;
         self.inner.sink.emit(CoreEvent::SettingsChanged { section });
+
+        if needs_http_restart {
+            self.restart_http().await?;
+        }
+
+        if let Some(debug) = new_debug_logging {
+            let ctl = self.inner.log_controller.lock().clone();
+            if let Some(ctl) = ctl {
+                ctl(debug);
+            }
+        }
+
+        if let Some(enabled) = new_preserve_transcript {
+            self.inner.mailboxes.set_preserve_transcript(enabled);
+        }
+
         Ok(())
     }
 
@@ -695,6 +874,10 @@ impl Service {
                 raw: crate::smtp::data_reader::CapturedSource::OnDisk(tmp, size),
                 ext_smtputf8: msg.envelope.ext_smtputf8,
                 ext_8bitmime: msg.envelope.ext_8bitmime,
+                // Replays never carry a transcript — the original
+                // session's wire conversation isn't reproducible from
+                // the recording payload.
+                transcript: None,
             };
             ingest_tx
                 .send(env)
@@ -1032,4 +1215,18 @@ impl std::fmt::Debug for ServiceHandle {
 fn short_id() -> String {
     use rand::distributions::{Alphanumeric, DistString};
     Alphanumeric.sample_string(&mut rand::thread_rng(), 6).to_lowercase()
+}
+
+/// Best-effort cleanup for an email's on-disk artifacts: the raw blob
+/// and, when present, the SMTP transcript sidecar. Used by
+/// `delete_email`, `clear_mailbox`, and `purge_mailbox` so no path
+/// ever forgets to drop the transcript alongside the email it belongs
+/// to. Retention has its own copy of this helper to avoid pulling
+/// `service.rs` into `pipeline/`.
+async fn delete_email_artifacts(raw_path: &str) {
+    let _ = tokio::fs::remove_file(raw_path).await;
+    let _ = tokio::fs::remove_file(crate::pipeline::ingest::transcript_path_for(
+        std::path::Path::new(raw_path),
+    ))
+    .await;
 }

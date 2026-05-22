@@ -14,6 +14,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::db::{audit, emails, settings};
 use crate::error::Result;
+use crate::pipeline::ingest::transcript_path_for;
+
+/// Delete the raw email blob + its SMTP transcript sidecar (when one
+/// exists). Both are best-effort: missing files are ignored.
+async fn remove_email_artifacts(raw_path: &str) {
+    let _ = tokio::fs::remove_file(raw_path).await;
+    let _ = tokio::fs::remove_file(transcript_path_for(std::path::Path::new(raw_path))).await;
+}
 
 /// Trim `mailbox_id` to at most `keep_max` newest emails. Returns the
 /// number of rows removed. Also deletes the matching raw-blob files.
@@ -33,7 +41,7 @@ pub async fn cap_per_mailbox(
     let ids: Vec<String> = victims.iter().map(|(id, _)| id.clone()).collect();
     emails::delete_by_ids(pool, &ids).await?;
     for (_, raw_path) in &victims {
-        let _ = tokio::fs::remove_file(raw_path).await;
+        remove_email_artifacts(raw_path).await;
     }
     Ok(victims.len() as u64)
 }
@@ -74,7 +82,7 @@ async fn run_once(pool: &SqlitePool) -> Result<()> {
             let ids: Vec<String> = victims.iter().map(|(id, _, _)| id.clone()).collect();
             emails::delete_by_ids(pool, &ids).await?;
             for (_, _, raw_path) in &victims {
-                let _ = tokio::fs::remove_file(raw_path).await;
+                remove_email_artifacts(raw_path).await;
             }
             tracing::info!(target: "postcrate::retention",
                 count = victims.len(), "age-purged emails");

@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::mail::address::ParsedPath;
 use crate::smtp::bounce::BounceEvaluator;
 use crate::smtp::chaos::ChaosInjector;
-use crate::smtp::codec::LineReader;
+use crate::smtp::codec::{LineReader, TranscriptSink};
 use crate::smtp::command::SmtpCommand;
 use crate::smtp::data_reader::{read_data, DataOutcome, DataReadCfg};
 use crate::smtp::extensions::EhloAdvert;
@@ -38,6 +38,10 @@ pub struct CapturedEnvelope {
     pub raw: crate::smtp::data_reader::CapturedSource,
     pub ext_smtputf8: bool,
     pub ext_8bitmime: bool,
+    /// Snapshot of the session transcript at the moment DATA completed.
+    /// `None` when the `Preserve SMTP transcript` pref was off at the
+    /// time the session began.
+    pub transcript: Option<Vec<String>>,
 }
 
 /// Per-session context — cheap to clone (mostly Arcs).
@@ -56,6 +60,11 @@ pub struct SessionCtx {
     /// set, STARTTLS replies `503` (already active) and the EHLO advert
     /// drops STARTTLS so a polite client doesn't try a second upgrade.
     pub tls_active: bool,
+    /// When `Some`, the reader and writer append to this buffer for
+    /// the lifetime of the session. The session attaches a snapshot of
+    /// the buffer to each successful `CapturedEnvelope` so the ingest
+    /// worker can persist a per-email SMTP transcript sidecar.
+    pub transcript: Option<TranscriptSink>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,8 +80,9 @@ where
     Io: AsyncRead + AsyncWrite + Unpin,
 {
     let (reader_half, writer_half) = tokio::io::split(io);
-    let mut reader = LineReader::new(reader_half, ctx.max_line);
-    let mut writer = ReplyWriter::new(writer_half);
+    let mut reader =
+        LineReader::new(reader_half, ctx.max_line).with_transcript(ctx.transcript.clone());
+    let mut writer = ReplyWriter::new(writer_half).with_transcript(ctx.transcript.clone());
 
     // Chaos hook: pre-banner delay / malformed greeting.
     apply_delay(&ctx.chaos).await;
@@ -155,6 +165,11 @@ where
                     writer.send(&SmtpReply::command_not_implemented()).await?;
                     continue;
                 }
+                // The captured AUTH command line (already in the
+                // transcript) may include the inline credential in the
+                // `AUTH PLAIN <base64>` form. Scrub it regardless of
+                // whether `initial` is set so we don't persist secrets.
+                redact_last(&ctx.transcript, "AUTH command");
                 // We accept anything (compatibility mode) — see
                 // EhloAdvert::auth_enabled.
                 match mechanism.as_str() {
@@ -165,6 +180,7 @@ where
                             if reader.next_line().await?.is_none() {
                                 break;
                             }
+                            redact_last(&ctx.transcript, "PLAIN credential");
                         }
                         writer.send(&SmtpReply::auth_ok()).await?;
                     }
@@ -175,10 +191,12 @@ where
                         if reader.next_line().await?.is_none() {
                             break;
                         }
+                        redact_last(&ctx.transcript, "LOGIN username");
                         writer.send(&SmtpReply::auth_continue("UGFzc3dvcmQ6")).await?; // "Password:"
                         if reader.next_line().await?.is_none() {
                             break;
                         }
+                        redact_last(&ctx.transcript, "LOGIN password");
                         writer.send(&SmtpReply::auth_ok()).await?;
                     }
                     _ => {
@@ -266,6 +284,15 @@ where
                             return Ok(SessionOutcome::Closed);
                         }
 
+                        // Snapshot the transcript *up to and including*
+                        // the inbound DATA's terminator. The reply that
+                        // confirms ingest (or rejects it) is appended
+                        // after this point and isn't included in the
+                        // per-email transcript — by then the envelope
+                        // is already on its way to the ingest worker.
+                        let transcript_snapshot =
+                            ctx.transcript.as_ref().map(|t| t.lock().clone());
+
                         let envelope = CapturedEnvelope {
                             mailbox_id: ctx.mailbox_id.clone(),
                             received_at: Utc::now().timestamp_millis(),
@@ -277,6 +304,7 @@ where
                             raw,
                             ext_smtputf8,
                             ext_8bitmime,
+                            transcript: transcript_snapshot,
                         };
 
                         if ctx.ingest_tx.send(envelope).await.is_err() {
@@ -328,5 +356,17 @@ where
 async fn apply_delay(chaos: &ChaosInjector) {
     if let Some(d) = chaos.delay() {
         tokio::time::sleep(d).await;
+    }
+}
+
+/// Overwrite the most-recent transcript entry — used to scrub AUTH
+/// credential frames (base64 user/pass) after the LineReader has
+/// captured them. No-op when transcript capture is off.
+fn redact_last(transcript: &Option<TranscriptSink>, label: &str) {
+    if let Some(t) = transcript {
+        let mut guard = t.lock();
+        if let Some(last) = guard.last_mut() {
+            *last = format!("> [redacted {label}]");
+        }
     }
 }

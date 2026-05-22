@@ -7,6 +7,7 @@ use std::borrow::Cow;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::error::Result;
+use crate::smtp::codec::TranscriptSink;
 
 #[derive(Debug, Clone)]
 pub struct SmtpReply {
@@ -120,11 +121,22 @@ impl SmtpReply {
 /// Writer wrapper that serializes a `SmtpReply` to the wire.
 pub struct ReplyWriter<W> {
     inner: W,
+    transcript: Option<TranscriptSink>,
 }
 
 impl<W: AsyncWrite + Unpin> ReplyWriter<W> {
     pub fn new(inner: W) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            transcript: None,
+        }
+    }
+
+    /// Attach a transcript sink — every send appends one `< ...` line
+    /// per reply line in the same shape the wire would see.
+    pub fn with_transcript(mut self, sink: Option<TranscriptSink>) -> Self {
+        self.transcript = sink;
+        self
     }
 
     pub fn into_inner(self) -> W {
@@ -138,12 +150,18 @@ impl<W: AsyncWrite + Unpin> ReplyWriter<W> {
             let line = format!("{} \r\n", reply.code);
             self.inner.write_all(line.as_bytes()).await?;
             self.inner.flush().await?;
+            if let Some(t) = &self.transcript {
+                t.lock().push(format!("< {}", reply.code));
+            }
             return Ok(());
         }
         for (i, l) in reply.lines.iter().enumerate() {
             let sep = if i + 1 == n { ' ' } else { '-' };
             let line = format!("{}{sep}{}\r\n", reply.code, l);
             self.inner.write_all(line.as_bytes()).await?;
+            if let Some(t) = &self.transcript {
+                t.lock().push(format!("< {}{sep}{}", reply.code, l));
+            }
         }
         self.inner.flush().await?;
         Ok(())
@@ -153,6 +171,13 @@ impl<W: AsyncWrite + Unpin> ReplyWriter<W> {
     pub async fn send_raw(&mut self, bytes: &[u8]) -> Result<()> {
         self.inner.write_all(bytes).await?;
         self.inner.flush().await?;
+        if let Some(t) = &self.transcript {
+            t.lock().push(format!(
+                "< [raw {} bytes] {}",
+                bytes.len(),
+                String::from_utf8_lossy(bytes).trim_end()
+            ));
+        }
         Ok(())
     }
 }

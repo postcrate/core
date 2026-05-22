@@ -69,6 +69,22 @@ async fn ingest_one(
     let raw_path = finalize_to_blob(&env.raw, raw_dir, &email_id).await?;
     let raw_path_str = raw_path.to_string_lossy().to_string();
 
+    // Persist the SMTP transcript next to the raw email when capture
+    // was on for this session. Best-effort: a transcript write error
+    // shouldn't stop ingest — the email itself is already on disk.
+    if let Some(lines) = &env.transcript {
+        let transcript_path = transcript_path_for(&raw_path);
+        let body = lines.join("\n") + "\n";
+        if let Err(e) = tokio::fs::write(&transcript_path, body).await {
+            tracing::warn!(
+                target: "postcrate::ingest",
+                path = %transcript_path.display(),
+                error = %e,
+                "failed to write SMTP transcript sidecar",
+            );
+        }
+    }
+
     // Write attachment blobs.
     let mut attachments = Vec::with_capacity(parsed.attachments.len());
     for att in &parsed.attachments {
@@ -162,6 +178,16 @@ async fn write_attachment(
 
 async fn load_inbox_prefs(pool: &SqlitePool) -> InboxPrefs {
     db_settings::load_all(pool).await.map(|s| s.inbox).unwrap_or_default()
+}
+
+/// Convention: SMTP transcript lives alongside the raw email, suffixed
+/// `.smtp.log`. Convention beats a schema migration: the engine can
+/// stat the file when serving the transcript IPC, and retention paths
+/// already know the raw path.
+pub fn transcript_path_for(raw_path: &std::path::Path) -> PathBuf {
+    let mut s = raw_path.as_os_str().to_os_string();
+    s.push(".smtp.log");
+    PathBuf::from(s)
 }
 
 fn parsed_to_json(p: &parse_mail::Parsed) -> serde_json::Value {

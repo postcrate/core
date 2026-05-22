@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,6 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use crate::config::CoreConfig;
+use crate::db::audit::{self as db_audit, AuditAppend};
 use crate::db::{bounce_rules, chaos_configs, emails, mailboxes as db_mb};
 use crate::error::{Error, Result};
 use crate::events::{CoreEvent, EventSink, MailboxStateChange};
@@ -39,6 +41,10 @@ pub struct MailboxService {
     /// Shared STARTTLS acceptor, built once at construction time. `None`
     /// when TLS is disabled or the binary was built without `--features tls`.
     tls_acceptor: Option<Arc<TlsAcceptor>>,
+    /// Reflects `AdvancedPrefs.preserve_smtp_transcript`. Shared with
+    /// every running listener so a pref flip takes effect on the very
+    /// next session without restarting any listener.
+    preserve_transcript: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for MailboxService {
@@ -79,7 +85,15 @@ impl MailboxService {
             expiry_tx,
             sink,
             tls_acceptor,
+            preserve_transcript: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Flip the live transcript-capture flag shared with every running
+    /// SMTP listener. Cheap atomic write; the next accepted session
+    /// reads the new value and decides whether to allocate a sink.
+    pub fn set_preserve_transcript(&self, enabled: bool) {
+        self.preserve_transcript.store(enabled, Ordering::Relaxed);
     }
 
     /// Boot-time: sweep expired ephemerals on disk, then start a listener
@@ -91,6 +105,10 @@ impl MailboxService {
             tracing::info!(target: "postcrate::mailbox", mailbox = %id, "swept expired ephemeral on boot");
         }
         // Orphan raw blobs: any file in raw_dir not referenced by a row.
+        // SMTP transcripts live alongside the raw email as
+        // `<raw>.smtp.log` — treat them as referenced when their email
+        // is, so they don't get swept up here and resurrected as
+        // orphans on next boot.
         let referenced: HashSet<String> = emails::list_all_raw_paths(&self.pool)
             .await?
             .into_iter()
@@ -102,6 +120,13 @@ impl MailboxService {
                     continue;
                 }
                 let as_str = p.to_string_lossy().to_string();
+                let parent = as_str.strip_suffix(".smtp.log").map(str::to_string);
+                let is_known_transcript = parent
+                    .as_ref()
+                    .is_some_and(|p| referenced.contains(p));
+                if is_known_transcript {
+                    continue;
+                }
                 if !referenced.contains(&as_str)
                     && !referenced.iter().any(|r| p.ends_with(r))
                 {
@@ -111,10 +136,12 @@ impl MailboxService {
         }
 
         // Start listeners. Skip anything already running so this is safe
-        // to call multiple times.
+        // to call multiple times. Also skip rows the user explicitly
+        // stopped (`paused`) and rows that failed last time — both
+        // require user action (Start) to come back online.
         let rows = db_mb::list_active_for_boot(&self.pool).await?;
         for row in rows {
-            if row.failed || self.listeners.contains_key(&row.id) {
+            if row.failed || row.paused || self.listeners.contains_key(&row.id) {
                 continue;
             }
             if let Err(e) = self.start_listener_for(&row.id, row.port).await {
@@ -124,6 +151,40 @@ impl MailboxService {
             }
         }
 
+        Ok(())
+    }
+
+    /// Bring a stopped or failed listener back online. Idempotent on
+    /// already-running mailboxes (returns Ok without rebinding).
+    /// Clears any prior `failed` state on success; surfaces bind
+    /// errors to the caller so Tauri can revert the optimistic update.
+    pub async fn start(&self, id: &str) -> Result<()> {
+        if self.listeners.contains_key(id) {
+            return Ok(());
+        }
+        let row = db_mb::get(&self.pool, id).await?;
+        // Best-effort: a stale `failed=1` from a previous boot must
+        // not block the retry. mark_failed runs again on error if the
+        // new bind also fails.
+        let _ = db_mb::clear_failed(&self.pool, id).await;
+        match self.start_listener_for(id, row.port).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let _ = db_mb::mark_failed(&self.pool, id, Some(&e.to_string())).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Tear down a running listener. Idempotent on already-stopped
+    /// mailboxes — returns Ok without emitting a second `Stopped`.
+    /// The user-intent `paused` flag is managed one layer up in
+    /// `Service::stop_mailbox`; this is the pure runtime tear-down.
+    pub async fn stop(&self, id: &str) -> Result<()> {
+        if !self.listeners.contains_key(id) {
+            return Ok(());
+        }
+        self.stop_listener(id).await;
         Ok(())
     }
 
@@ -195,8 +256,16 @@ impl MailboxService {
         patch: &db_mb::UpdateMailboxInput,
     ) -> Result<db_mb::Mailbox> {
         let old = db_mb::get(&self.pool, id).await?;
+        // Snapshot runtime state *before* the DB write so a port-change
+        // rebind only happens when the listener was actually running.
+        // For paused mailboxes we'd otherwise resurrect the listener
+        // here (stop is a no-op, start succeeds) while the DB still
+        // says paused=true — a quiet state lie. For failed mailboxes
+        // the user's recovery path is Start (which probes + clears
+        // `failed`), not Edit; Edit only mutates the persisted record.
+        let was_running = self.listeners.contains_key(id);
         let updated = db_mb::update(&self.pool, id, patch).await?;
-        if updated.port != old.port {
+        if updated.port != old.port && was_running {
             self.stop_listener(id).await;
             if let Err(e) = self.start_listener_for(id, updated.port).await {
                 let _ = db_mb::mark_failed(&self.pool, id, Some(&e.to_string())).await;
@@ -352,6 +421,7 @@ impl MailboxService {
             ingest_tx: self.ingest_tx.clone(),
             tls_acceptor: self.tls_acceptor.clone(),
             implicit_tls,
+            preserve_transcript: self.preserve_transcript.clone(),
         };
 
         match listener::start(spec).await {
@@ -372,6 +442,7 @@ impl MailboxService {
                 } else {
                     e
                 };
+                self.audit_failed(id, &kind.to_string()).await;
                 self.sink.emit(CoreEvent::MailboxStateChanged {
                     mailbox_id: id.to_string(),
                     change: MailboxStateChange::Failed {
@@ -383,4 +454,32 @@ impl MailboxService {
         }
     }
 
+    /// Append a `mailbox.failed` audit row whenever a listener can't
+    /// bind. Actor is "system" (not "user") so the UI can tell it
+    /// apart from a user-initiated start. Failures here are
+    /// best-effort: if the audit table itself can't be written, log
+    /// it but never block the originating error from propagating.
+    async fn audit_failed(&self, id: &str, error: &str) {
+        let entry = db_audit::append(
+            &self.pool,
+            AuditAppend {
+                actor: "system".to_string(),
+                action: "mailbox.failed".to_string(),
+                target_kind: Some("mailbox".to_string()),
+                target_id: Some(id.to_string()),
+                metadata: Some(serde_json::json!({ "error": error })),
+            },
+        )
+        .await;
+        match entry {
+            Ok(entry) => {
+                self.sink.emit(CoreEvent::AuditAppended { entry });
+            }
+            Err(err) => {
+                tracing::warn!(target: "postcrate::mailbox",
+                    error = %err, mailbox = %id,
+                    "couldn't write mailbox.failed audit row");
+            }
+        }
+    }
 }

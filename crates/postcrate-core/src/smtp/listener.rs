@@ -1,8 +1,10 @@
 //! TCP accept loop for one mailbox.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use parking_lot::Mutex;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -44,6 +46,10 @@ pub struct ListenerSpec {
     /// STARTTLS is not advertised inside an implicit-TLS session
     /// (RFC 8314 §3.3).
     pub implicit_tls: bool,
+    /// Live flag for SMTP-transcript capture. Cloned from the mailbox
+    /// service; the accept loop reads it per-connection so a pref flip
+    /// takes effect on the very next session.
+    pub preserve_transcript: Arc<AtomicBool>,
 }
 
 pub async fn start(spec: ListenerSpec) -> Result<ListenerHandle> {
@@ -88,6 +94,15 @@ async fn accept_loop(
             res = listener.accept() => match res {
                 Ok((stream, peer)) => {
                     tracing::debug!(target: "postcrate::smtp", mailbox = %spec.mailbox_id, %peer, "accepted");
+                    // Allocate a transcript sink only when the pref is
+                    // on at *this* accept. Sessions started before the
+                    // pref was flipped continue without capture; new
+                    // sessions immediately reflect the new value.
+                    let transcript = spec
+                        .preserve_transcript
+                        .load(Ordering::Relaxed)
+                        .then(|| Arc::new(Mutex::new(Vec::new())));
+
                     let ctx = SessionCtx {
                         mailbox_id: spec.mailbox_id.clone(),
                         ehlo_advert: (*ehlo).clone(),
@@ -102,6 +117,7 @@ async fn accept_loop(
                         // is a TLS ClientHello. After the wrap, the session
                         // runs with tls_active=true from the start.
                         tls_active: spec.implicit_tls,
+                        transcript,
                     };
                     let acceptor = spec.tls_acceptor.clone();
                     let implicit = spec.implicit_tls;

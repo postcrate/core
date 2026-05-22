@@ -66,3 +66,35 @@ async fn probe_bind(host: IpAddr, port: u16) -> Result<()> {
     drop(l);
     Ok(())
 }
+
+/// Walk upward from `start` (or 1025, whichever is larger) looking for
+/// a port that is *both* free in this DB (`taken`) and not currently
+/// bound by anything else on the host (probe-tested with a real
+/// `TcpListener::bind`). Returns the first hit.
+///
+/// Does NOT reserve the port — the caller may proceed to use it
+/// however they like. If a racing `create_mailbox` claims it first,
+/// the actual create will fail with `Error::PortInUse(port)` and the
+/// UI revalidates. That's the right behavior: suggestions are
+/// advisory, the create is authoritative.
+///
+/// Errors with `Error::PortRangeExhausted` if nothing in `[start, 65535]`
+/// is free — extremely unlikely on a normal box, but possible on a
+/// loaded build agent or in a tight test sandbox.
+pub async fn find_free_port(
+    start: u16,
+    bind_host: IpAddr,
+    taken: &HashSet<u16>,
+) -> Result<u16> {
+    // Refuse to suggest reserved/privileged ports (<1024). The OS
+    // would also reject the bind, but failing fast with the right
+    // message is friendlier than a misleading PermissionDenied.
+    let mut p = start.max(1025);
+    while p < u16::MAX {
+        if !taken.contains(&p) && probe_bind(bind_host, p).await.is_ok() {
+            return Ok(p);
+        }
+        p = p.saturating_add(1);
+    }
+    Err(Error::PortRangeExhausted)
+}

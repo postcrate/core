@@ -2,15 +2,25 @@
 //! varies by phase (line-mode in command phase, byte-mode + special
 //! dot-stuffing rules during DATA), so each phase reads what it needs.
 
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 
 use crate::error::{Error, Result};
+
+/// Append-only buffer that captures every command/reply for an SMTP
+/// session. Owned by the session and shared into the reader and writer
+/// so each call site can record its own direction without threading
+/// the buffer through every function signature.
+pub type TranscriptSink = Arc<Mutex<Vec<String>>>;
 
 /// Buffered reader specialized for SMTP's command phase.
 pub struct LineReader<R> {
     inner: BufReader<R>,
     max_line: usize,
     bytes_read: u64,
+    transcript: Option<TranscriptSink>,
 }
 
 impl<R: AsyncRead + Unpin> LineReader<R> {
@@ -19,7 +29,16 @@ impl<R: AsyncRead + Unpin> LineReader<R> {
             inner: BufReader::with_capacity(8 * 1024, r),
             max_line,
             bytes_read: 0,
+            transcript: None,
         }
+    }
+
+    /// Attach a transcript sink — every successful `next_line` will
+    /// also push `> <line>` into it. Passing the default (no call)
+    /// leaves capture disabled with zero overhead.
+    pub fn with_transcript(mut self, sink: Option<TranscriptSink>) -> Self {
+        self.transcript = sink;
+        self
     }
 
     pub fn into_inner(self) -> R {
@@ -65,7 +84,11 @@ impl<R: AsyncRead + Unpin> LineReader<R> {
                     // SMTP commands are 7-bit ASCII in practice; we
                     // accept UTF-8 too. Lossy conversion is fine — we
                     // only use this for command parsing.
-                    return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
+                    let line = String::from_utf8_lossy(&buf).into_owned();
+                    if let Some(t) = &self.transcript {
+                        t.lock().push(format!("> {line}"));
+                    }
+                    return Ok(Some(line));
                 }
                 buf.push(*b);
                 if buf.len() > self.max_line {
